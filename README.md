@@ -107,7 +107,9 @@ Create a `.env` file with the following variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PLUGIN_TARGET_CHAT_ID` | (none) | Your Telegram user ID for receiving scheduled messages |
-| `QUOTES_CRON` | `0 * * * *` | Cron schedule for daily quotes (default: hourly) |
+| `QUOTES_CRON` | `0 * * * *` | Cron schedule for quotes (default: hourly) |
+| `WEATHER_DEFAULT_LOCATION` | (none) | Default location for weather (e.g., "Seattle, WA") |
+| `WEATHER_CRON` | `0 8 * * *` | Cron schedule for daily weather (default: 8am) |
 
 ### Example `.env`
 
@@ -129,6 +131,8 @@ CLAUDE_ALLOWED_TOOLS=Read,Glob,Grep,WebSearch,WebFetch,Bash(git *),Bash(npm *)
 # Plugins: receive scheduled messages
 PLUGIN_TARGET_CHAT_ID=123456789
 QUOTES_CRON=0 9 * * *
+WEATHER_DEFAULT_LOCATION=Seattle, WA
+WEATHER_CRON=0 8 * * *
 ```
 
 ## Available Tools
@@ -193,20 +197,35 @@ The bot supports a plugin system for adding custom commands and scheduled tasks.
 
 **Quotes Plugin** (`plugins/quotes.js`)
 - `.quote` — Get an AI-generated motivational quote on demand
-- Scheduled quotes — Sends you a daily positive message
+- Scheduled quotes — Sends you a positive message on a schedule
 
 **Food Diary Plugin** (`plugins/food-diary.js`)
 - `.food <item>` — Log what you ate
 - `.food` — Prompts you then logs your response
 - `.foodlog` — View your recent food entries
 
+**Reminder Plugin** (`plugins/reminder.js`)
+- `.reminder <text> <time>` — Set a reminder (e.g., `.reminder call mom 30m`)
+- `.reminders` — View your pending reminders
+- `.cancelreminder <id>` — Cancel a reminder by ID
+- Time formats: `30s`, `5m`, `2h`, `1d` (seconds, minutes, hours, days)
+
+**Weather Plugin** (`plugins/weather.js`)
+- `.weather` — Get weather for your default location (or share location on Telegram)
+- `.weather <location>` — Get weather for a specific place
+- Scheduled weather — Sends daily weather report
+
 Configure in `.env`:
 ```bash
 # Your Telegram user ID (required for scheduled messages)
 PLUGIN_TARGET_CHAT_ID=123456789
 
-# When to send daily quote (cron format, default: 9am daily)
+# Quotes schedule (cron format, default: hourly)
 QUOTES_CRON=0 9 * * *
+
+# Weather settings
+WEATHER_DEFAULT_LOCATION=Seattle, WA
+WEATHER_CRON=0 8 * * *
 ```
 
 ### Creating Your Own Plugin
@@ -278,8 +297,10 @@ oyster-bot/
 │   └── types/
 │       └── message.js    # Unified message type
 ├── plugins/              # Plugin directory (add your own here)
-│   ├── quotes.js         # Daily quotes plugin
-│   └── food-diary.js     # Food diary plugin
+│   ├── quotes.js         # Motivational quotes plugin
+│   ├── food-diary.js     # Food diary plugin
+│   ├── reminder.js       # Reminders plugin
+│   └── weather.js        # Weather plugin
 ├── package.json
 ├── .env                  # Environment variables (not committed)
 └── README.md
