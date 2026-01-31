@@ -1,0 +1,19 @@
+{
+  "name": "oyster-bot",
+  "version": "1.0.0",
+  "description": "Chat with Claude Code from Telegram — lightweight bot wrapping Claude CLI",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.25",
+    "dotenv": "^17.2.3",
+    "node-cron": "^4.2.1",
+    "telegraf": "^4.16.3"
+  }
+}
