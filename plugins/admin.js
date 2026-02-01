@@ -182,18 +182,96 @@ export default {
     },
 
     /**
-     * Create pull request
-     * Usage: .pr [title]
+     * Create pull request with auto-generated title and description
+     * Usage: .pr [title]  - auto-generates description, optional custom title
      */
     async pr(msg, { reply }) {
       const args = parseArgs(msg);
-      const title = args.join(" ");
+      let title = args.join(" ");
       
       try {
-        let cmd = "gh pr create --fill";
-        if (title) {
-          cmd += ` --title "${title.replace(/"/g, '\\"')}"`;
+        // Get base branch (usually main or master)
+        let baseBranch = "main";
+        try {
+          execSync("git rev-parse --verify main", GIT_CWD);
+        } catch {
+          baseBranch = "master";
         }
+        
+        // Get current branch
+        const currentBranch = execSync("git branch --show-current", GIT_CWD).trim();
+        
+        // Get diff and commits for context
+        let diff = "";
+        let commits = "";
+        try {
+          diff = execSync(`git diff ${baseBranch}...HEAD`, GIT_CWD);
+          if (diff.length > MAX_DIFF_CHARS) {
+            diff = diff.slice(0, MAX_DIFF_CHARS) + "\n... (truncated)";
+          }
+          commits = execSync(`git log ${baseBranch}..HEAD --oneline`, GIT_CWD);
+        } catch {
+          // Branch might not have diverged yet
+          diff = execSync("git diff HEAD~1", GIT_CWD);
+          commits = execSync("git log -3 --oneline", GIT_CWD);
+        }
+        
+        await reply("Generating PR description...");
+        
+        // Generate title and body with Claude
+        const prompt = `Generate a GitHub pull request title and description for these changes.
+
+Branch: ${currentBranch}
+Commits:
+${commits}
+
+Diff:
+${diff}
+
+Reply in this exact format (no other text):
+TITLE: <concise title, max 72 chars>
+BODY:
+<markdown description with:
+- Summary (1-2 sentences)
+- Key changes (bullet points)
+- Any notes for reviewers>`;
+
+        let body = "";
+        try {
+          const result = await runClaude(prompt);
+          const response = result.result?.trim() || "";
+          
+          // Parse title and body from response
+          const titleMatch = response.match(/TITLE:\s*(.+)/);
+          const bodyMatch = response.match(/BODY:\s*([\s\S]+)/);
+          
+          if (!title && titleMatch) {
+            title = titleMatch[1].trim();
+          }
+          if (bodyMatch) {
+            body = bodyMatch[1].trim();
+          }
+        } catch (e) {
+          console.error("[admin] Failed to generate PR description:", e.message);
+        }
+        
+        // Fall back to branch name as title if needed
+        if (!title) {
+          title = currentBranch.replace(/[-_]/g, " ").replace(/^(feature|fix|chore)\//, "");
+        }
+        
+        // Create the PR
+        let cmd = `gh pr create --title "${title.replace(/"/g, '\\"')}"`;
+        if (body) {
+          // Write body to temp file to avoid shell escaping issues
+          const { writeFileSync, unlinkSync } = await import("fs");
+          const bodyFile = "/tmp/pr-body.md";
+          writeFileSync(bodyFile, body);
+          cmd += ` --body-file "${bodyFile}"`;
+        } else {
+          cmd += " --fill";
+        }
+        
         const result = execSync(cmd, GIT_CWD);
         await reply(`PR created: ${result.trim()}`);
       } catch (e) {
