@@ -10,6 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * 
  * Auto-discovers and loads plugins from the plugins/ directory.
  * Plugins can provide:
+ *   - init: async ({ channels, config, claude }) => {} — runs once at startup
  *   - commands: { commandName: async (msg, { reply, claude, config, channel }) => {} }
  *   - schedules: [{ cron: '0 * * * *', handler: async ({ channels, config, claude }) => {} }]
  *   - onMessage: async (msg, { reply, claude, config, channel }) => boolean
@@ -109,6 +110,20 @@ export async function loadPlugins({ channels, config, runClaude }) {
           handler: plugin.onMessage,
         });
         console.log(`[plugins]   Registered message handler`);
+      }
+
+      // Call init if provided (runs once at startup)
+      if (plugin.init) {
+        try {
+          await plugin.init({
+            channels: _channels,
+            config: _config,
+            claude: _runClaude,
+          });
+          console.log(`[plugins]   Initialized`);
+        } catch (err) {
+          console.error(`[plugins]   Init error:`, err.message);
+        }
       }
 
       loadedPlugins.push(plugin.name);

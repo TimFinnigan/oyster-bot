@@ -282,17 +282,9 @@ export default {
     },
   },
 
-  // Restore reminders on first schedule tick after startup
-  schedules: [
-    {
-      // Runs every minute to restore reminders after bot restart
-      cron: "* * * * *",
-      handler: async ({ channels }) => {
-        if (!_channels) {
-          _channels = channels;
-          restoreReminders();
-        }
-      },
-    },
-  ],
+  // Initialize plugin and restore pending reminders on startup
+  init: async ({ channels }) => {
+    _channels = channels;
+    restoreReminders();
+  },
 };
