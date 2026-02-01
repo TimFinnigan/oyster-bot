@@ -171,13 +171,45 @@ Bash(* --help)
 
 ## Usage
 
+### Development
+
 ```bash
-# Start the bot
+# Start the bot (foreground)
 npm start
 
 # Or run directly
 node src/app.js
 ```
+
+### Production (with PM2)
+
+For production use, run with [PM2](https://pm2.keymetrics.io/) for automatic restarts and crash recovery:
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start with the included config
+pm2 start ecosystem.config.cjs
+
+# View logs
+pm2 logs oyster-bot
+
+# Other useful commands
+pm2 list              # Show status
+pm2 restart oyster-bot  # Manual restart
+pm2 stop oyster-bot     # Stop the bot
+pm2 delete oyster-bot   # Remove from PM2
+
+# Make it survive reboots (optional)
+pm2 save
+pm2 startup
+```
+
+The PM2 config includes crash loop protection:
+- Max 10 restarts before giving up
+- Exponential backoff between restarts
+- Memory limit restart at 200MB
 
 ## Bot Commands
 
@@ -194,6 +226,11 @@ The bot supports a plugin system for adding custom commands and scheduled tasks.
 **Note:** Plugin commands use `.` prefix (e.g., `.quote`) instead of `/` to avoid conflicts with Claude's slash commands.
 
 ### Included Plugins
+
+**Admin Plugin** (`plugins/admin.js`)
+- `.status` — Show bot uptime, memory usage, and PID
+- `.reload` — Hot reload all plugins without restarting the process
+- `.restart` — Full process restart (requires PM2)
 
 **Quotes Plugin** (`plugins/quotes.js`)
 - `.quote` — Get an AI-generated motivational quote on demand
@@ -297,10 +334,12 @@ oyster-bot/
 │   └── types/
 │       └── message.js    # Unified message type
 ├── plugins/              # Plugin directory (add your own here)
+│   ├── admin.js          # Admin commands (reload, restart, status)
 │   ├── quotes.js         # Motivational quotes plugin
 │   ├── food-diary.js     # Food diary plugin
 │   ├── reminder.js       # Reminders plugin
 │   └── weather.js        # Weather plugin
+├── ecosystem.config.cjs  # PM2 process manager config
 ├── package.json
 ├── .env                  # Environment variables (not committed)
 └── README.md
