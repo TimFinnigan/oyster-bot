@@ -7,6 +7,7 @@
 import { Telegraf } from "telegraf";
 import { BaseChannel } from "./base.js";
 import { createMessage } from "../types/message.js";
+import { toTelegramMarkdownV2, stripMarkdown } from "../utils/telegram-markdown.js";
 
 export class TelegramChannel extends BaseChannel {
   constructor(config) {
@@ -80,7 +81,15 @@ export class TelegramChannel extends BaseChannel {
 
   async send(channelId, text) {
     if (!this.bot) throw new Error("Telegram bot not started");
-    await this.bot.telegram.sendMessage(channelId, text);
+    try {
+      const formatted = toTelegramMarkdownV2(text);
+      await this.bot.telegram.sendMessage(channelId, formatted, {
+        parse_mode: "MarkdownV2",
+      });
+    } catch {
+      // Fallback to plain text if MarkdownV2 parsing fails
+      await this.bot.telegram.sendMessage(channelId, stripMarkdown(text));
+    }
   }
 
   async sendTyping(channelId) {
@@ -94,19 +103,38 @@ export class TelegramChannel extends BaseChannel {
 
   async reply(channelId, messageId, text) {
     if (!this.bot) throw new Error("Telegram bot not started");
-    await this.bot.telegram.sendMessage(channelId, text, {
-      reply_to_message_id: Number(messageId),
-    });
+    try {
+      const formatted = toTelegramMarkdownV2(text);
+      await this.bot.telegram.sendMessage(channelId, formatted, {
+        parse_mode: "MarkdownV2",
+        reply_to_message_id: Number(messageId),
+      });
+    } catch {
+      await this.bot.telegram.sendMessage(channelId, stripMarkdown(text), {
+        reply_to_message_id: Number(messageId),
+      });
+    }
   }
 
   async edit(channelId, messageId, newText) {
     if (!this.bot) throw new Error("Telegram bot not started");
-    await this.bot.telegram.editMessageText(
-      channelId,
-      Number(messageId),
-      undefined,
-      newText
-    );
+    try {
+      const formatted = toTelegramMarkdownV2(newText);
+      await this.bot.telegram.editMessageText(
+        channelId,
+        Number(messageId),
+        undefined,
+        formatted,
+        { parse_mode: "MarkdownV2" }
+      );
+    } catch {
+      await this.bot.telegram.editMessageText(
+        channelId,
+        Number(messageId),
+        undefined,
+        stripMarkdown(newText)
+      );
+    }
   }
 
   /**
