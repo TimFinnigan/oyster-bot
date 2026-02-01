@@ -25,6 +25,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const commandHandlers = new Map();
 // Collected message handlers from plugins
 const messageHandlers = [];
+// Track scheduled tasks so we can stop them on reload
+const scheduledTasks = [];
 
 // Store references for use in handlers
 let _runClaude, _config, _channels;
@@ -87,7 +89,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
             continue;
           }
 
-          cron.schedule(schedule.cron, async () => {
+          const task = cron.schedule(schedule.cron, async () => {
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
               await schedule.handler({ 
@@ -99,6 +101,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
           });
+          scheduledTasks.push(task);
           console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
         }
       }
@@ -216,4 +219,131 @@ export async function handlePluginMessage(msg) {
   return false;
 }
 
-export default { loadPlugins, handlePluginMessage };
+/**
+ * Hot reload all plugins without restarting the process
+ * @returns {Promise<{success: boolean, loaded: string[], errors: string[]}>}
+ */
+export async function reloadPlugins() {
+  console.log("[plugins] Hot reloading plugins...");
+  
+  const errors = [];
+  
+  // Stop all scheduled tasks
+  for (const task of scheduledTasks) {
+    try {
+      task.stop();
+    } catch (err) {
+      // Ignore stop errors
+    }
+  }
+  scheduledTasks.length = 0;
+  
+  // Clear existing handlers
+  commandHandlers.clear();
+  messageHandlers.length = 0;
+  
+  // Re-load all plugins with cache-busting
+  const pluginsDir = join(__dirname, "..", "plugins");
+  
+  let files;
+  try {
+    files = readdirSync(pluginsDir).filter((f) => f.endsWith(".js"));
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { success: true, loaded: [], errors: [] };
+    }
+    return { success: false, loaded: [], errors: [err.message] };
+  }
+
+  const loadedPlugins = [];
+
+  for (const file of files) {
+    try {
+      const pluginPath = pathToFileURL(join(pluginsDir, file)).href;
+      // Add cache-busting query param to force re-import
+      const freshPath = `${pluginPath}?reload=${Date.now()}`;
+      const plugin = (await import(freshPath)).default;
+
+      if (!plugin || !plugin.name) {
+        console.warn(`[plugins] Skipping ${file}: no default export or missing 'name'`);
+        continue;
+      }
+
+      console.log(`[plugins] Reloading: ${plugin.name}`);
+
+      // Register commands
+      if (plugin.commands) {
+        for (const [cmdName, handler] of Object.entries(plugin.commands)) {
+          commandHandlers.set(cmdName.toLowerCase(), {
+            handler,
+            pluginName: plugin.name,
+          });
+          console.log(`[plugins]   Registered command: .${cmdName}`);
+        }
+      }
+
+      // Set up scheduled tasks
+      if (plugin.schedules) {
+        for (const schedule of plugin.schedules) {
+          if (!cron.validate(schedule.cron)) {
+            console.error(`[plugins] Invalid cron expression: ${schedule.cron}`);
+            continue;
+          }
+
+          const task = cron.schedule(schedule.cron, async () => {
+            console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
+            try {
+              await schedule.handler({ 
+                channels: _channels, 
+                config: _config, 
+                claude: _runClaude 
+              });
+            } catch (err) {
+              console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
+            }
+          });
+          scheduledTasks.push(task);
+          console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
+        }
+      }
+
+      // Register message handler
+      if (plugin.onMessage) {
+        messageHandlers.push({
+          name: plugin.name,
+          handler: plugin.onMessage,
+        });
+        console.log(`[plugins]   Registered message handler`);
+      }
+
+      // Call init if provided
+      if (plugin.init) {
+        try {
+          await plugin.init({
+            channels: _channels,
+            config: _config,
+            claude: _runClaude,
+          });
+          console.log(`[plugins]   Initialized`);
+        } catch (err) {
+          console.error(`[plugins]   Init error:`, err.message);
+          errors.push(`${plugin.name} init: ${err.message}`);
+        }
+      }
+
+      loadedPlugins.push(plugin.name);
+    } catch (err) {
+      console.error(`[plugins] Failed to reload ${file}:`, err.message);
+      errors.push(`${file}: ${err.message}`);
+    }
+  }
+
+  console.log(`[plugins] Reloaded ${loadedPlugins.length} plugin(s): ${loadedPlugins.join(", ") || "none"}`);
+  return { 
+    success: errors.length === 0, 
+    loaded: loadedPlugins, 
+    errors 
+  };
+}
+
+export default { loadPlugins, handlePluginMessage, reloadPlugins };
