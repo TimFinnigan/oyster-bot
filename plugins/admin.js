@@ -145,7 +145,7 @@ export default {
      */
     async branch(msg, { reply }) {
       const args = parseArgs(msg);
-      const name = generateBranchName(args.join(" "));
+      let name = args.join(" ");
       
       try {
         const currentBranch = execSync("git branch --show-current", GIT_CWD).trim();
@@ -154,6 +154,41 @@ export default {
         if (!["main", "master"].includes(currentBranch)) {
           await reply(`Already on branch: ${currentBranch}`);
           return;
+        }
+        
+        // Generate branch name if not provided
+        if (!name) {
+          // Check if there are changes to analyze
+          const status = execSync("git status --porcelain", GIT_CWD).trim();
+          
+          if (status) {
+            await reply("Generating branch name...");
+            let diff = execSync("git diff", GIT_CWD) || execSync("git diff --staged", GIT_CWD);
+            if (diff.length > MAX_DIFF_CHARS) {
+              diff = diff.slice(0, MAX_DIFF_CHARS) + "\n... (truncated)";
+            }
+            
+            try {
+              const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps\n\nChanges:\n${diff}`;
+              const result = await runClaude(prompt);
+              name = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
+              name = name?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
+            } catch (e) {
+              console.error("[admin] Failed to generate branch name:", e.message);
+            }
+          }
+          
+          // Fallback to timestamp
+          if (!name) {
+            const now = new Date();
+            const stamp = now.toISOString().slice(0, 10).replace(/-/g, "");
+            name = `feature/update-${stamp}`;
+          } else if (!name.includes("/")) {
+            name = `feature/${name}`;
+          }
+        } else {
+          // User provided a name - sanitize it
+          name = generateBranchName(name);
         }
         
         // Create and switch to new branch
@@ -371,8 +406,8 @@ BODY:
         
         await reply(`Merging PR (${strategy})...`);
         
-        // Merge the PR and delete the remote branch
-        execSync(`gh pr merge --${strategy} --delete-branch`, GIT_CWD);
+        // Merge the PR for this specific branch and delete the remote branch
+        execSync(`gh pr merge ${currentBranch} --${strategy} --delete-branch`, GIT_CWD);
         
         // Switch to base branch and pull
         execSync(`git checkout ${baseBranch}`, GIT_CWD);
@@ -423,19 +458,39 @@ BODY:
             return;
           }
           
-          // Generate branch name from args or diff
+          // Generate branch name from args or use Claude
           let branchName = args.join(" ");
           if (!branchName) {
-            // Try to generate from staged diff
-            let diff = execSync("git diff --staged --stat", GIT_CWD).trim();
-            // Extract first changed file name as hint
-            const firstFile = diff.split("\n")[0]?.split("|")[0]?.trim();
-            if (firstFile) {
-              branchName = firstFile.replace(/\.[^.]+$/, "").replace(/[/\\]/g, "-");
+            await reply("🌿 Generating branch name...");
+            
+            // Get diff for context
+            let diff = execSync("git diff --staged", GIT_CWD);
+            if (diff.length > MAX_DIFF_CHARS) {
+              diff = diff.slice(0, MAX_DIFF_CHARS) + "\n... (truncated)";
+            }
+            
+            try {
+              const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps, docs/api-reference\n\nChanges:\n${diff}`;
+              const result = await runClaude(prompt);
+              branchName = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
+              // Sanitize - remove any characters that aren't valid in branch names
+              branchName = branchName?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
+            } catch (e) {
+              console.error("[admin] Failed to generate branch name:", e.message);
             }
           }
           
-          currentBranch = generateBranchName(branchName);
+          // Fallback if Claude failed or returned empty
+          if (!branchName) {
+            const now = new Date();
+            const stamp = now.toISOString().slice(0, 10).replace(/-/g, "");
+            branchName = `feature/update-${stamp}`;
+          } else if (!branchName.includes("/")) {
+            // Add prefix if missing
+            branchName = `feature/${branchName}`;
+          }
+          
+          currentBranch = branchName;
           await reply(`🌿 Creating branch: ${currentBranch}`);
           execSync(`git checkout -b ${currentBranch}`, GIT_CWD);
         }
@@ -475,12 +530,12 @@ BODY:
         execSync("git push -u origin HEAD", GIT_CWD);
         await reply("✓ Pushed");
         
-        // Step 4: Check if PR already exists
+        // Step 4: Check if PR already exists for this specific branch
         let prUrl = "";
         try {
-          prUrl = execSync("gh pr view --json url -q .url", GIT_CWD).trim();
+          prUrl = execSync(`gh pr view ${currentBranch} --json url -q .url`, GIT_CWD).trim();
         } catch {
-          // No PR exists yet
+          // No PR exists yet for this branch
         }
         
         if (!prUrl) {
@@ -549,9 +604,9 @@ BODY:
           await reply(`✓ PR exists: ${prUrl}`);
         }
         
-        // Step 6: Merge
+        // Step 6: Merge the PR for this specific branch
         await reply("🔀 Merging PR...");
-        execSync("gh pr merge --squash --delete-branch", GIT_CWD);
+        execSync(`gh pr merge ${currentBranch} --squash --delete-branch`, GIT_CWD);
         
         // Step 7: Cleanup
         execSync(`git checkout ${baseBranch}`, GIT_CWD);
