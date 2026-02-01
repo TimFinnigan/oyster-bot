@@ -4,6 +4,7 @@
  * Set reminders that will notify you after a specified time.
  * - .reminder <text> <time> — Set a reminder (e.g., .reminder take out trash 30m)
  * - .reminders — View your pending reminders
+ * - .reminderlog — View completed reminder history
  * - .cancelreminder <id> — Cancel a reminder by ID
  * 
  * Time formats: 30s, 5m, 2h, 1d (seconds, minutes, hours, days)
@@ -15,6 +16,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REMINDERS_FILE = join(__dirname, "..", "data", "reminders.json");
+const HISTORY_FILE = join(__dirname, "..", "data", "reminder-history.json");
 
 // Active timeout IDs for cancellation (keyed by reminder ID)
 const activeTimeouts = new Map();
@@ -52,6 +54,36 @@ function loadReminders() {
 function saveReminders(reminders) {
   ensureDataDir();
   writeFileSync(REMINDERS_FILE, JSON.stringify(reminders, null, 2));
+}
+
+/**
+ * Load reminder history from file
+ */
+function loadHistory() {
+  try {
+    if (existsSync(HISTORY_FILE)) {
+      return JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
+    }
+  } catch (err) {
+    console.error("[reminder] Error loading history:", err.message);
+  }
+  return [];
+}
+
+/**
+ * Save completed reminder to history
+ */
+function saveToHistory(reminder, status = "completed") {
+  ensureDataDir();
+  
+  const history = loadHistory();
+  history.push({
+    ...reminder,
+    status,
+    completedAt: new Date().toISOString(),
+  });
+  
+  writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
 }
 
 /**
@@ -130,10 +162,27 @@ async function sendReminder(reminder) {
     console.error(`[reminder] Failed to send reminder:`, err.message);
   }
   
-  // Remove from storage
+  // Save to history before removing
+  saveToHistory(reminder, "completed");
+  
+  // Remove from active storage
   const reminders = loadReminders().filter(r => r.id !== reminder.id);
   saveReminders(reminders);
   activeTimeouts.delete(reminder.id);
+}
+
+/**
+ * Format date for display
+ */
+function formatDate(isoString) {
+  const date = new Date(isoString);
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /**
@@ -273,12 +322,33 @@ export default {
         activeTimeouts.delete(id);
       }
       
-      // Remove from storage
+      // Save to history as cancelled
       const cancelled = reminders[index];
+      saveToHistory(cancelled, "cancelled");
+      
+      // Remove from active storage
       reminders.splice(index, 1);
       saveReminders(reminders);
       
       await reply(`✅ Cancelled reminder: "${cancelled.text}"`);
+    },
+
+    reminderlog: async (msg, { reply }) => {
+      const history = loadHistory().filter(r => r.userId === msg.userId);
+      
+      if (history.length === 0) {
+        await reply("No reminder history yet.");
+        return;
+      }
+      
+      // Show last 10 entries
+      const recent = history.slice(-10);
+      const lines = recent.map(r => {
+        const icon = r.status === "completed" ? "✅" : "❌";
+        return `${icon} ${formatDate(r.completedAt)}: "${r.text}"`;
+      });
+      
+      await reply(`📋 Reminder history:\n\n${lines.join("\n")}`);
     },
   },
 
