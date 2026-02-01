@@ -83,25 +83,60 @@ export function runClaude(prompt, sessionId = null) {
     let buffer = "";
     let stderr = "";
     let finalResult = null;
+    let webSearchTimer = null;
 
     const timeout = setTimeout(() => {
       proc.kill("SIGTERM");
       reject(new Error(`Claude timed out after ${config.claude.timeoutMs / 1000}s`));
     }, config.claude.timeoutMs);
 
+    function clearWebSearchTimer() {
+      if (webSearchTimer) {
+        clearTimeout(webSearchTimer);
+        webSearchTimer = null;
+      }
+    }
+
     proc.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
-      
+
       // Process complete JSON lines
       const lines = buffer.split("\n");
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
-      
+
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
           logStreamEvent(event);
-          
+
+          // Web search timeout: abandon if a web search tool takes too long
+          // Claude CLI stream-json sends: assistant (with tool_use) -> user (tool result) -> assistant (response)
+          if (config.claude.webSearchTimeoutMs) {
+            if (event.type === "assistant" && event.message?.content) {
+              // Check if this assistant message contains a WebSearch/WebFetch tool use
+              const hasWebTool = event.message.content.some(
+                (block) =>
+                  block.type === "tool_use" &&
+                  ["WebSearch", "WebFetch"].includes(block.name)
+              );
+
+              if (hasWebTool) {
+                // Starting a web search/fetch - set the timeout
+                clearWebSearchTimer();
+                webSearchTimer = setTimeout(() => {
+                  console.log(`[claude] web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s, killing process`);
+                  proc.kill("SIGTERM");
+                  reject(new Error(`Web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s`));
+                }, config.claude.webSearchTimeoutMs);
+              }
+            }
+            // Clear timer when tool result comes back (user event) or final result
+            if (event.type === "user" || event.type === "result") {
+              clearWebSearchTimer();
+            }
+          }
+
           // Capture the final result
           if (event.type === "result") {
             finalResult = event;
@@ -120,6 +155,7 @@ export function runClaude(prompt, sessionId = null) {
 
     proc.on("close", (code) => {
       clearTimeout(timeout);
+      clearWebSearchTimer();
       console.log(`[claude] exited with code ${code}`);
 
       if (code !== 0) {
@@ -153,6 +189,7 @@ export function runClaude(prompt, sessionId = null) {
 
     proc.on("error", (err) => {
       clearTimeout(timeout);
+      clearWebSearchTimer();
       console.error(`[claude] spawn error:`, err.message);
       reject(err);
     });

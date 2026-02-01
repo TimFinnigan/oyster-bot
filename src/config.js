@@ -60,6 +60,9 @@ export const config = {
     extraPath: process.env.CLAUDE_EXTRA_PATH || "/usr/local/bin:/opt/homebrew/bin",
     dangerouslySkipPermissions: process.env.CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS === "true",
     verboseLogging: process.env.CLAUDE_VERBOSE_LOGGING === "true",
+    webSearchTimeoutMs: process.env.WEB_SEARCH_TIMEOUT_MS
+      ? Number(process.env.WEB_SEARCH_TIMEOUT_MS)
+      : null, // null = no separate web search timeout
     allowedDirectories: process.env.CLAUDE_ALLOWED_DIRECTORIES
       ? process.env.CLAUDE_ALLOWED_DIRECTORIES.split(",").map((d) => d.trim())
       : null,
