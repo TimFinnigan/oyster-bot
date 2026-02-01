@@ -1,9 +1,11 @@
-import { readdirSync } from "fs";
+import { readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import cron from "node-cron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PLUGINS_DIR = join(__dirname, "..", "plugins");
+const LOCAL_PLUGINS_DIR = join(PLUGINS_DIR, "local");
 
 /**
  * Plugin Loader (Channel-Agnostic)
@@ -32,6 +34,28 @@ const scheduledTasks = [];
 let _runClaude, _config, _channels;
 
 /**
+ * Discover plugin files from plugins/ and plugins/local/ directories.
+ * Returns array of absolute file paths.
+ */
+function discoverPluginFiles() {
+  const files = [];
+  for (const dir of [PLUGINS_DIR, LOCAL_PLUGINS_DIR]) {
+    try {
+      if (!existsSync(dir)) continue;
+      const entries = readdirSync(dir).filter((f) => f.endsWith(".js"));
+      for (const f of entries) {
+        files.push(join(dir, f));
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        console.error(`[plugins] Error reading ${dir}:`, err.message);
+      }
+    }
+  }
+  return files;
+}
+
+/**
  * Load all plugins from the plugins directory
  * @param {Object} options
  * @param {Map<string, BaseChannel>} options.channels - Channel instances
@@ -43,28 +67,22 @@ export async function loadPlugins({ channels, config, runClaude }) {
   _config = config;
   _channels = channels;
   
-  const pluginsDir = join(__dirname, "..", "plugins");
-  
-  let files;
-  try {
-    files = readdirSync(pluginsDir).filter((f) => f.endsWith(".js"));
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      console.log("[plugins] No plugins directory found, skipping plugin loading");
-      return [];
-    }
-    throw err;
+  const pluginFiles = discoverPluginFiles();
+
+  if (pluginFiles.length === 0) {
+    console.log("[plugins] No plugin files found, skipping plugin loading");
+    return [];
   }
 
   const loadedPlugins = [];
 
-  for (const file of files) {
+  for (const filePath of pluginFiles) {
     try {
-      const pluginPath = pathToFileURL(join(pluginsDir, file)).href;
+      const pluginPath = pathToFileURL(filePath).href;
       const plugin = (await import(pluginPath)).default;
 
       if (!plugin || !plugin.name) {
-        console.warn(`[plugins] Skipping ${file}: no default export or missing 'name'`);
+        console.warn(`[plugins] Skipping ${filePath}: no default export or missing 'name'`);
         continue;
       }
 
@@ -131,7 +149,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
 
       loadedPlugins.push(plugin.name);
     } catch (err) {
-      console.error(`[plugins] Failed to load ${file}:`, err.message);
+      console.error(`[plugins] Failed to load ${filePath}:`, err.message);
     }
   }
 
@@ -243,29 +261,18 @@ export async function reloadPlugins() {
   messageHandlers.length = 0;
   
   // Re-load all plugins with cache-busting
-  const pluginsDir = join(__dirname, "..", "plugins");
-  
-  let files;
-  try {
-    files = readdirSync(pluginsDir).filter((f) => f.endsWith(".js"));
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return { success: true, loaded: [], errors: [] };
-    }
-    return { success: false, loaded: [], errors: [err.message] };
-  }
-
+  const pluginFiles = discoverPluginFiles();
   const loadedPlugins = [];
 
-  for (const file of files) {
+  for (const filePath of pluginFiles) {
     try {
-      const pluginPath = pathToFileURL(join(pluginsDir, file)).href;
+      const pluginPath = pathToFileURL(filePath).href;
       // Add cache-busting query param to force re-import
       const freshPath = `${pluginPath}?reload=${Date.now()}`;
       const plugin = (await import(freshPath)).default;
 
       if (!plugin || !plugin.name) {
-        console.warn(`[plugins] Skipping ${file}: no default export or missing 'name'`);
+        console.warn(`[plugins] Skipping ${filePath}: no default export or missing 'name'`);
         continue;
       }
 
@@ -333,8 +340,8 @@ export async function reloadPlugins() {
 
       loadedPlugins.push(plugin.name);
     } catch (err) {
-      console.error(`[plugins] Failed to reload ${file}:`, err.message);
-      errors.push(`${file}: ${err.message}`);
+      console.error(`[plugins] Failed to reload ${filePath}:`, err.message);
+      errors.push(`${filePath}: ${err.message}`);
     }
   }
 
