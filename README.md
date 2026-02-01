@@ -228,9 +228,20 @@ The bot supports a plugin system for adding custom commands and scheduled tasks.
 ### Included Plugins
 
 **Admin Plugin** (`plugins/admin.js`)
+
+Bot management:
 - `.status` — Show bot uptime, memory usage, and PID
 - `.reload` — Hot reload all plugins without restarting the process
 - `.restart` — Full process restart (requires PM2)
+
+Git workflow (commit, PR, merge from Telegram):
+- `.git` — Show current branch and changed files
+- `.branch [name]` — Create and switch to new branch (auto-generates name if not provided)
+- `.commit [msg]` — Stage all and commit (auto-generates message if not provided)
+- `.push` — Push current branch to remote
+- `.pr [title]` — Create PR with auto-generated description
+- `.merge [squash|rebase]` — Merge PR and delete branch (defaults to squash)
+- `.ship [branch-name]` — All-in-one: branch → commit → push → PR → merge (creates branch if on main)
 
 **Quotes Plugin** (`plugins/quotes.js`)
 - `.quote` — Get an AI-generated motivational quote on demand
