@@ -8,7 +8,7 @@
 import config from "./config.js";
 import { runClaude } from "./claude.js";
 import { createChannels } from "./channels/index.js";
-import { loadPlugins, handlePluginMessage } from "./plugin-loader.js";
+import { loadPlugins, handlePluginMessage, notifyOutgoingMessage } from "./plugin-loader.js";
 import { getSessionKey } from "./types/message.js";
 
 // Per-session tracking: sessionKey -> Claude sessionId
@@ -154,6 +154,13 @@ async function handleClaudeMessage(msg, channel) {
     for (const chunk of chunks) {
       await channel.send(msg.channelId, chunk);
     }
+
+    // Notify plugins about the outgoing message
+    await notifyOutgoingMessage({
+      channelType: msg.channelType,
+      channelId: msg.channelId,
+      text: responseText,
+    });
   } catch (err) {
     console.error("[app] Error:", err.message);
     await channel.send(msg.channelId, `Error: ${err.message.slice(0, 500)}`);

@@ -27,6 +27,8 @@ const LOCAL_PLUGINS_DIR = join(PLUGINS_DIR, "local");
 const commandHandlers = new Map();
 // Collected message handlers from plugins
 const messageHandlers = [];
+// Collected outgoing message handlers from plugins
+const outgoingHandlers = [];
 // Track scheduled tasks so we can stop them on reload
 const scheduledTasks = [];
 
@@ -107,20 +109,23 @@ export async function loadPlugins({ channels, config, runClaude }) {
             continue;
           }
 
+          const cronOpts = {};
+          if (schedule.timezone) cronOpts.timezone = schedule.timezone;
+
           const task = cron.schedule(schedule.cron, async () => {
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
-              await schedule.handler({ 
-                channels: _channels, 
-                config: _config, 
-                claude: _runClaude 
+              await schedule.handler({
+                channels: _channels,
+                config: _config,
+                claude: _runClaude
               });
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
-          });
+          }, cronOpts);
           scheduledTasks.push(task);
-          console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
+          console.log(`[plugins]   Scheduled task: ${schedule.cron}${schedule.timezone ? ` (${schedule.timezone})` : ""}`);
         }
       }
 
@@ -131,6 +136,15 @@ export async function loadPlugins({ channels, config, runClaude }) {
           handler: plugin.onMessage,
         });
         console.log(`[plugins]   Registered message handler`);
+      }
+
+      // Register outgoing message handler
+      if (plugin.onOutgoingMessage) {
+        outgoingHandlers.push({
+          name: plugin.name,
+          handler: plugin.onOutgoingMessage,
+        });
+        console.log(`[plugins]   Registered outgoing message handler`);
       }
 
       // Call init if provided (runs once at startup)
@@ -259,6 +273,7 @@ export async function reloadPlugins() {
   // Clear existing handlers
   commandHandlers.clear();
   messageHandlers.length = 0;
+  outgoingHandlers.length = 0;
   
   // Re-load all plugins with cache-busting
   const pluginFiles = discoverPluginFiles();
@@ -297,20 +312,23 @@ export async function reloadPlugins() {
             continue;
           }
 
+          const cronOpts = {};
+          if (schedule.timezone) cronOpts.timezone = schedule.timezone;
+
           const task = cron.schedule(schedule.cron, async () => {
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
-              await schedule.handler({ 
-                channels: _channels, 
-                config: _config, 
-                claude: _runClaude 
+              await schedule.handler({
+                channels: _channels,
+                config: _config,
+                claude: _runClaude
               });
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
-          });
+          }, cronOpts);
           scheduledTasks.push(task);
-          console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
+          console.log(`[plugins]   Scheduled task: ${schedule.cron}${schedule.timezone ? ` (${schedule.timezone})` : ""}`);
         }
       }
 
@@ -353,4 +371,18 @@ export async function reloadPlugins() {
   };
 }
 
-export default { loadPlugins, handlePluginMessage, reloadPlugins };
+/**
+ * Notify plugins about an outgoing bot message
+ * @param {Object} info - { channelType, channelId, text }
+ */
+export async function notifyOutgoingMessage(info) {
+  for (const { name, handler } of outgoingHandlers) {
+    try {
+      await handler(info);
+    } catch (err) {
+      console.error(`[plugins] Outgoing handler error (${name}):`, err.message);
+    }
+  }
+}
+
+export default { loadPlugins, handlePluginMessage, reloadPlugins, notifyOutgoingMessage };

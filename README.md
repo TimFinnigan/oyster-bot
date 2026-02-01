@@ -110,6 +110,8 @@ Create a `.env` file with the following variables:
 | `QUOTES_CRON` | `0 * * * *` | Cron schedule for quotes (default: hourly) |
 | `WEATHER_DEFAULT_LOCATION` | (none) | Default location for weather (e.g., "Seattle, WA") |
 | `WEATHER_CRON` | `0 8 * * *` | Cron schedule for daily weather (default: 8am) |
+| `CHAT_EXPORT_CRON` | `50 23 * * *` | Cron schedule for nightly chat export (default: 11:50 PM) |
+| `CHAT_EXPORT_TZ` | (system time) | Timezone for chat export schedule (e.g., "America/Los_Angeles") |
 
 ### Example `.env`
 
@@ -263,6 +265,11 @@ Git workflow (commit, PR, merge from Telegram):
 - `.weather <location>` — Get weather for a specific place
 - Scheduled weather — Sends daily weather report
 
+**Chat Export Plugin** (`plugins/chat-export.js`)
+- `.exportchat` — Manually export today's conversation so far
+- Nightly export — Automatically saves the day's conversation to `data/chat-logs/YYYY-MM-DD.md` (configurable via `CHAT_EXPORT_CRON` and `CHAT_EXPORT_TZ`)
+- Captures both user messages and bot responses
+
 Configure in `.env`:
 ```bash
 # Your Telegram user ID (required for scheduled messages)
@@ -274,6 +281,10 @@ QUOTES_CRON=0 9 * * *
 # Weather settings
 WEATHER_DEFAULT_LOCATION=Seattle, WA
 WEATHER_CRON=0 8 * * *
+
+# Chat export schedule (cron format, default: 11:50 PM system time)
+CHAT_EXPORT_CRON=50 23 * * *
+# CHAT_EXPORT_TZ=America/Los_Angeles
 ```
 
 ### Creating Your Own Plugin
@@ -295,6 +306,7 @@ export default {
   schedules: [
     {
       cron: '0 12 * * *',  // noon daily
+      timezone: 'America/Los_Angeles',  // optional, defaults to system time
       handler: async ({ channels, config, claude }) => {
         const chatId = config.plugins.targetChatId;
         const channel = channels.get('telegram');
@@ -302,11 +314,16 @@ export default {
       }
     }
   ],
-  
+
   // Message handler for follow-up input (optional)
   onMessage: async (msg, { reply }) => {
     // Return true if handled, false to pass to next handler
     return false;
+  },
+
+  // Outgoing message handler — called when the bot sends a response (optional)
+  onOutgoingMessage: async ({ channelType, channelId, text }) => {
+    // Useful for logging bot responses
   }
 }
 ```
@@ -349,7 +366,11 @@ oyster-bot/
 │   ├── quotes.js         # Motivational quotes plugin
 │   ├── food-diary.js     # Food diary plugin
 │   ├── reminder.js       # Reminders plugin
-│   └── weather.js        # Weather plugin
+│   ├── weather.js        # Weather plugin
+│   ├── chat-export.js    # Chat export plugin
+│   └── local/            # Local plugins (gitignored, per-instance)
+├── data/                 # Persistent plugin data
+│   └── chat-logs/        # Daily chat exports (JSONL buffers + markdown)
 ├── ecosystem.config.cjs  # PM2 process manager config
 ├── package.json
 ├── .env                  # Environment variables (not committed)
