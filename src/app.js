@@ -60,7 +60,8 @@ async function handleMessage(msg, channels) {
   if (msg.text.startsWith(".")) {
     const pluginHandled = await handlePluginMessage(msg);
     if (pluginHandled) return;
-    // Unknown .command - ignore silently
+    const cmdName = msg.text.slice(1).split(/\s+/)[0];
+    await channel.send(msg.channelId, `Unknown command: .${cmdName}\nTry .reload if you recently added a plugin.`);
     return;
   }
 
