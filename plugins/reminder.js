@@ -1,13 +1,16 @@
 /**
  * Reminder Plugin
- * 
+ *
  * Set reminders that will notify you after a specified time.
  * - .reminder <text> <time> — Set a reminder (e.g., .reminder take out trash 30m)
  * - .reminders — View your pending reminders
  * - .reminderlog — View completed reminder history
- * - .cancelreminder <id> — Cancel a reminder by ID
- * 
+ * - .cancelreminder <id> — Cancel a reminder or recurring reminder by ID
+ * - .every <time> <text> — Set a daily recurring reminder (e.g., .every 10pm are you in bed yet?)
+ * - .recurring — View your active recurring reminders
+ *
  * Time formats: 30s, 5m, 2h, 1d (seconds, minutes, hours, days)
+ * Clock time formats (for .every): 10pm, 8:30am, 22:00, 14:30
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -17,6 +20,7 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REMINDERS_FILE = join(__dirname, "..", "data", "reminders.json");
 const HISTORY_FILE = join(__dirname, "..", "data", "reminder-history.json");
+const RECURRING_FILE = join(__dirname, "..", "data", "recurring-reminders.json");
 
 // Active timeout IDs for cancellation (keyed by reminder ID)
 const activeTimeouts = new Map();
@@ -84,6 +88,141 @@ function saveToHistory(reminder, status = "completed") {
   });
   
   writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+}
+
+/**
+ * Load recurring reminders from file
+ */
+function loadRecurring() {
+  try {
+    if (existsSync(RECURRING_FILE)) {
+      return JSON.parse(readFileSync(RECURRING_FILE, "utf-8"));
+    }
+  } catch (err) {
+    console.error("[reminder] Error loading recurring reminders:", err.message);
+  }
+  return [];
+}
+
+/**
+ * Save recurring reminders to file
+ */
+function saveRecurring(recurring) {
+  ensureDataDir();
+  writeFileSync(RECURRING_FILE, JSON.stringify(recurring, null, 2));
+}
+
+/**
+ * Parse a clock time string like "10pm", "8:30am", "22:00" into { hour, minute }.
+ * Returns null if invalid.
+ */
+function parseClockTime(str) {
+  // 12-hour format: 10pm, 8:30am, 12:00am
+  const match12 = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (match12) {
+    let hour = parseInt(match12[1], 10);
+    const minute = match12[2] ? parseInt(match12[2], 10) : 0;
+    const period = match12[3].toLowerCase();
+
+    if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+
+    if (period === "am" && hour === 12) hour = 0;
+    else if (period === "pm" && hour !== 12) hour += 12;
+
+    return { hour, minute };
+  }
+
+  // 24-hour format: 22:00, 14:30, 0:00
+  const match24 = str.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    const hour = parseInt(match24[1], 10);
+    const minute = parseInt(match24[2], 10);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return { hour, minute };
+  }
+
+  return null;
+}
+
+/**
+ * Get the next occurrence of a given clock time as a Date.
+ * If the time has already passed today, returns tomorrow's occurrence.
+ */
+function getNextOccurrence(hour, minute) {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(hour, minute, 0, 0);
+
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
+
+/**
+ * Format a clock time { hour, minute } for display
+ */
+function formatClockTime(hour, minute) {
+  const period = hour >= 12 ? "pm" : "am";
+  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return minute === 0
+    ? `${displayHour}${period}`
+    : `${displayHour}:${String(minute).padStart(2, "0")}${period}`;
+}
+
+/**
+ * Send a recurring reminder and re-schedule for the next day
+ */
+async function sendRecurringReminder(recurring) {
+  if (!_channels) {
+    console.error("[reminder] Channels not initialized");
+    return;
+  }
+
+  const channel = _channels.get(recurring.channelType);
+  if (!channel) {
+    console.error(`[reminder] Channel '${recurring.channelType}' not available`);
+    return;
+  }
+
+  try {
+    await channel.send(recurring.channelId, `🔁 Recurring reminder: ${recurring.text}`);
+    console.log(`[reminder] Sent recurring reminder: ${recurring.id}`);
+  } catch (err) {
+    console.error(`[reminder] Failed to send recurring reminder:`, err.message);
+  }
+
+  // Re-schedule for tomorrow
+  scheduleRecurring(recurring);
+}
+
+/**
+ * Schedule a recurring reminder for its next occurrence
+ */
+function scheduleRecurring(recurring) {
+  const next = getNextOccurrence(recurring.hour, recurring.minute);
+  const delay = next.getTime() - Date.now();
+
+  const timeoutId = setTimeout(() => sendRecurringReminder(recurring), delay);
+  activeTimeouts.set(recurring.id, timeoutId);
+}
+
+/**
+ * Restore recurring reminders from storage on startup
+ */
+function restoreRecurring() {
+  const recurring = loadRecurring();
+  let restored = 0;
+
+  for (const r of recurring) {
+    scheduleRecurring(r);
+    restored++;
+  }
+
+  if (restored > 0) {
+    console.log(`[reminder] Restored ${restored} recurring reminder(s)`);
+  }
 }
 
 /**
@@ -302,35 +441,119 @@ export default {
 
     cancelreminder: async (msg, { reply }) => {
       const id = msg.text.replace(/^\.cancelreminder\s*/i, "").trim();
-      
+
       if (!id) {
-        await reply("Usage: `.cancelreminder <id>`\nUse `.reminders` to see your reminder IDs.");
+        await reply("Usage: `.cancelreminder <id>`\nUse `.reminders` or `.recurring` to see your reminder IDs.");
         return;
       }
-      
+
+      // Check one-time reminders first
       const reminders = loadReminders();
       const index = reminders.findIndex(r => r.id === id && r.userId === msg.userId);
-      
-      if (index === -1) {
-        await reply(`❌ Reminder with ID "${id}" not found.`);
+
+      if (index !== -1) {
+        // Cancel timeout if active
+        if (activeTimeouts.has(id)) {
+          clearTimeout(activeTimeouts.get(id));
+          activeTimeouts.delete(id);
+        }
+
+        const cancelled = reminders[index];
+        saveToHistory(cancelled, "cancelled");
+
+        reminders.splice(index, 1);
+        saveReminders(reminders);
+
+        await reply(`✅ Cancelled reminder: "${cancelled.text}"`);
         return;
       }
-      
-      // Cancel timeout if active
-      if (activeTimeouts.has(id)) {
-        clearTimeout(activeTimeouts.get(id));
-        activeTimeouts.delete(id);
+
+      // Check recurring reminders
+      const recurring = loadRecurring();
+      const recurIndex = recurring.findIndex(r => r.id === id && r.userId === msg.userId);
+
+      if (recurIndex !== -1) {
+        if (activeTimeouts.has(id)) {
+          clearTimeout(activeTimeouts.get(id));
+          activeTimeouts.delete(id);
+        }
+
+        const cancelled = recurring[recurIndex];
+        saveToHistory(cancelled, "cancelled");
+
+        recurring.splice(recurIndex, 1);
+        saveRecurring(recurring);
+
+        await reply(`✅ Cancelled recurring reminder: "${cancelled.text}"`);
+        return;
       }
-      
-      // Save to history as cancelled
-      const cancelled = reminders[index];
-      saveToHistory(cancelled, "cancelled");
-      
-      // Remove from active storage
-      reminders.splice(index, 1);
-      saveReminders(reminders);
-      
-      await reply(`✅ Cancelled reminder: "${cancelled.text}"`);
+
+      await reply(`❌ Reminder with ID "${id}" not found.`);
+    },
+
+    every: async (msg, { reply, channels }) => {
+      if (!_channels) _channels = channels;
+
+      const input = msg.text.replace(/^\.every\s*/i, "").trim();
+
+      if (!input) {
+        await reply("Usage: `.every <time> <text>`\nExample: `.every 10pm are you in bed yet?`\n\nClock formats: `10pm`, `8:30am`, `22:00`");
+        return;
+      }
+
+      const parts = input.split(/\s+/);
+      const timeStr = parts[0];
+      const parsed = parseClockTime(timeStr);
+
+      if (!parsed) {
+        await reply("❌ Invalid clock time. Use formats like: `10pm`, `8:30am`, `22:00`\n\nExample: `.every 9am drink water`");
+        return;
+      }
+
+      const text = parts.slice(1).join(" ");
+      if (!text) {
+        await reply("❌ Please specify what to remind you about.\n\nExample: `.every 10pm are you in bed yet?`");
+        return;
+      }
+
+      const recurring = {
+        id: generateId(),
+        userId: msg.userId,
+        channelType: msg.channelType,
+        channelId: msg.channelId,
+        text,
+        hour: parsed.hour,
+        minute: parsed.minute,
+        createdAt: new Date().toISOString(),
+      };
+
+      const all = loadRecurring();
+      all.push(recurring);
+      saveRecurring(all);
+
+      scheduleRecurring(recurring);
+
+      const next = getNextOccurrence(parsed.hour, parsed.minute);
+      const delay = next.getTime() - Date.now();
+
+      await reply(`🔁 Recurring reminder set for daily at ${formatClockTime(parsed.hour, parsed.minute)}.\n📝 "${text}"\n⏳ First fire in ${formatDuration(delay)}`);
+    },
+
+    recurring: async (msg, { reply }) => {
+      const all = loadRecurring().filter(r => r.userId === msg.userId);
+
+      if (all.length === 0) {
+        await reply("No active recurring reminders. Use `.every <time> <text>` to set one!");
+        return;
+      }
+
+      const lines = all.map(r => {
+        const next = getNextOccurrence(r.hour, r.minute);
+        const delay = next.getTime() - Date.now();
+        return `• [${r.id}] "${r.text}" — daily at ${formatClockTime(r.hour, r.minute)} (next in ${formatDuration(delay)})`;
+      });
+
+      await reply(`🔁 Your recurring reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <id>\``);
     },
 
     reminderlog: async (msg, { reply }) => {
@@ -356,5 +579,6 @@ export default {
   init: async ({ channels }) => {
     _channels = channels;
     restoreReminders();
+    restoreRecurring();
   },
 };
