@@ -6,7 +6,10 @@
  *   .stop    - Emergency stop (kills the process immediately)
  *   .restart - Full process restart (requires PM2)
  *   .status  - Show bot status and loaded plugins
- * 
+ *
+ * Git:
+ *   .changes - Summarize uncommitted changes using Claude
+ *
  * Git workflow:
  *   .git     - Show git status
  *   .branch  - Create and switch to new branch
@@ -128,6 +131,38 @@ export default {
         `• Node: ${process.version}\n` +
         `• PID: ${process.pid}`
       );
+    },
+
+    /**
+     * Summarize uncommitted changes using Claude
+     * Usage: .changes
+     */
+    async changes(msg, { reply, sendTyping, claude }) {
+      try {
+        const status = execSync("git status --short", GIT_CWD).trim();
+        if (!status) {
+          await reply("No uncommitted changes.");
+          return;
+        }
+
+        await sendTyping();
+
+        let diff = execSync("git diff", GIT_CWD) + execSync("git diff --staged", GIT_CWD);
+        if (diff.length > MAX_DIFF_CHARS) {
+          diff = diff.slice(0, MAX_DIFF_CHARS) + "\n... (truncated)";
+        }
+
+        const branch = execSync("git branch --show-current", GIT_CWD).trim();
+
+        const result = await claude(
+          `Summarize these uncommitted git changes in a concise, readable way. Group by theme (e.g. new features, bug fixes, refactors). Use bullet points. Keep it short — this is for a quick Telegram status update.\n\nBranch: ${branch}\n\nFiles changed:\n${status}\n\nDiff:\n${diff}`
+        );
+
+        const summary = result.result?.trim() || "Could not generate summary.";
+        await reply(`📝 Changes on ${branch}:\n\n${summary}`);
+      } catch (err) {
+        await reply(`Error: ${err.message.slice(0, 200)}`);
+      }
     },
 
     /**
