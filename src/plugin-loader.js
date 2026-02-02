@@ -29,6 +29,8 @@ const commandHandlers = new Map();
 const messageHandlers = [];
 // Track scheduled tasks so we can stop them on reload
 const scheduledTasks = [];
+// Track plugin destroy functions for cleanup on reload
+const destroyHandlers = [];
 
 // Store references for use in handlers
 let _runClaude, _config, _channels;
@@ -131,6 +133,15 @@ export async function loadPlugins({ channels, config, runClaude }) {
           handler: plugin.onMessage,
         });
         console.log(`[plugins]   Registered message handler`);
+      }
+
+      // Register destroy handler for cleanup on reload
+      if (plugin.destroy) {
+        destroyHandlers.push({
+          name: plugin.name,
+          handler: plugin.destroy,
+        });
+        console.log(`[plugins]   Registered destroy handler`);
       }
 
       // Call init if provided (runs once at startup)
@@ -246,6 +257,17 @@ export async function reloadPlugins() {
   
   const errors = [];
   
+  // Call destroy handlers for plugin cleanup (timers, connections, etc.)
+  for (const { name, handler } of destroyHandlers) {
+    try {
+      await handler();
+      console.log(`[plugins] Destroyed: ${name}`);
+    } catch (err) {
+      console.error(`[plugins] Destroy error (${name}):`, err.message);
+    }
+  }
+  destroyHandlers.length = 0;
+
   // Stop all scheduled tasks
   for (const task of scheduledTasks) {
     try {
@@ -255,7 +277,7 @@ export async function reloadPlugins() {
     }
   }
   scheduledTasks.length = 0;
-  
+
   // Clear existing handlers
   commandHandlers.clear();
   messageHandlers.length = 0;
@@ -321,6 +343,15 @@ export async function reloadPlugins() {
           handler: plugin.onMessage,
         });
         console.log(`[plugins]   Registered message handler`);
+      }
+
+      // Register destroy handler for cleanup on reload
+      if (plugin.destroy) {
+        destroyHandlers.push({
+          name: plugin.name,
+          handler: plugin.destroy,
+        });
+        console.log(`[plugins]   Registered destroy handler`);
       }
 
       // Call init if provided

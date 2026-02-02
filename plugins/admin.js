@@ -3,6 +3,7 @@
  * 
  * Provides administrative commands for managing the bot:
  *   .reload  - Hot reload all plugins without restarting
+ *   .stop    - Emergency stop (kills the process immediately)
  *   .restart - Full process restart (requires PM2)
  *   .status  - Show bot status and loaded plugins
  * 
@@ -77,6 +78,15 @@ export default {
       } catch (err) {
         await reply(`Reload failed: ${err.message}`);
       }
+    },
+
+    /**
+     * Emergency stop — immediately kills the process
+     * Usage: .stop
+     */
+    async stop(msg, { reply }) {
+      await reply("Stopping bot...");
+      process.exit(0);
     },
 
     /**
