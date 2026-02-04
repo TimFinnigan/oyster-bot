@@ -53,6 +53,10 @@ async function fetchWeather(location, { sendTyping, reply, claude }) {
 export default {
   name: "weather",
 
+  help: {
+    weather: "Get current weather for a location",
+  },
+
   commands: {
     weather: async (msg, helpers) => {
       const { reply, channel, config } = helpers;

@@ -62,6 +62,10 @@ async function getQuote(claude) {
 export default {
   name: "quotes",
 
+  help: {
+    quote: "Get an inspiring quote",
+  },
+
   commands: {
     quote: async (msg, { sendTyping, reply, claude }) => {
       await sendTyping();

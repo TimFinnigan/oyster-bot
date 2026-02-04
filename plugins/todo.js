@@ -58,6 +58,12 @@ function addTodo(userId, channelType, text) {
 export default {
   name: "todo",
 
+  help: {
+    todo: "Add a todo item",
+    todos: "View your todo list",
+    done: "Mark a todo as done (e.g., .done 1)",
+  },
+
   commands: {
     todo: async (msg, { reply }) => {
       const userKey = getUserKey(msg);
