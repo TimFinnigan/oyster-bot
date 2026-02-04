@@ -57,6 +57,11 @@ function addEntry(userId, channelType, text) {
 export default {
   name: "gratitude",
 
+  help: {
+    thanks: "Log something you're grateful for",
+    grateful: "View your gratitude log",
+  },
+
   commands: {
     thanks: async (msg, { reply }) => {
       const userKey = getUserKey(msg);

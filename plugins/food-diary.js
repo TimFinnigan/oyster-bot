@@ -82,6 +82,11 @@ function formatDate(isoString) {
 export default {
   name: "food-diary",
 
+  help: {
+    food: "Log what you ate",
+    foodlog: "View recent food entries",
+  },
+
   commands: {
     food: async (msg, { reply }) => {
       const userKey = getUserKey(msg);

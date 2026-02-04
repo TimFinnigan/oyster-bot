@@ -58,6 +58,21 @@ function generateBranchName(description) {
 export default {
   name: "admin",
 
+  help: {
+    reload: "Hot reload all plugins",
+    stop: "Emergency stop the bot",
+    restart: "Full process restart via PM2",
+    status: "Show bot status and uptime",
+    changes: "Summarize uncommitted git changes",
+    git: "Show git status",
+    branch: "Create and switch to a new branch",
+    commit: "Stage all and commit (auto-generates message)",
+    push: "Push to remote",
+    pr: "Create a pull request",
+    merge: "Merge current PR and clean up",
+    ship: "All-in-one: branch, commit, push, PR, merge",
+  },
+
   commands: {
     /**
      * Hot reload all plugins

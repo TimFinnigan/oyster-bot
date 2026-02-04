@@ -371,6 +371,15 @@ function restoreReminders() {
 export default {
   name: "reminder",
 
+  help: {
+    reminder: "Set a reminder (e.g., .reminder call mom 30m)",
+    reminders: "View pending reminders",
+    cancelreminder: "Cancel a reminder by ID",
+    every: "Set a daily recurring reminder (e.g., .every 10pm stretch)",
+    recurring: "View active recurring reminders",
+    reminderlog: "View completed reminder history",
+  },
+
   commands: {
     reminder: async (msg, { reply, channels }) => {
       // Store channels reference if not already set

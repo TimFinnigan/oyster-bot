@@ -23,7 +23,7 @@ const LOCAL_PLUGINS_DIR = join(PLUGINS_DIR, "local");
  * The `reply` helper sends a response back through the appropriate channel.
  */
 
-// Collected command handlers from plugins: commandName -> { handler, pluginName }
+// Collected command handlers from plugins: commandName -> { handler, pluginName, description }
 const commandHandlers = new Map();
 // Collected message handlers from plugins
 const messageHandlers = [];
@@ -92,10 +92,12 @@ export async function loadPlugins({ channels, config, runClaude }) {
 
       // Register commands (will be triggered by .commandName)
       if (plugin.commands) {
+        const helpMap = plugin.help || {};
         for (const [cmdName, handler] of Object.entries(plugin.commands)) {
           commandHandlers.set(cmdName.toLowerCase(), {
             handler,
             pluginName: plugin.name,
+            description: helpMap[cmdName] || null,
           });
           console.log(`[plugins]   Registered command: .${cmdName}`);
         }
@@ -214,6 +216,7 @@ export async function handlePluginMessage(msg) {
     config: _config,
     channel,
     channels: _channels,
+    getRegisteredCommands,
   };
   
   // Handle .commands
@@ -302,10 +305,12 @@ export async function reloadPlugins() {
 
       // Register commands
       if (plugin.commands) {
+        const helpMap = plugin.help || {};
         for (const [cmdName, handler] of Object.entries(plugin.commands)) {
           commandHandlers.set(cmdName.toLowerCase(), {
             handler,
             pluginName: plugin.name,
+            description: helpMap[cmdName] || null,
           });
           console.log(`[plugins]   Registered command: .${cmdName}`);
         }
@@ -322,10 +327,10 @@ export async function reloadPlugins() {
           const task = cron.schedule(schedule.cron, async () => {
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
-              await schedule.handler({ 
-                channels: _channels, 
-                config: _config, 
-                claude: _runClaude 
+              await schedule.handler({
+                channels: _channels,
+                config: _config,
+                claude: _runClaude
               });
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
@@ -384,4 +389,16 @@ export async function reloadPlugins() {
   };
 }
 
-export default { loadPlugins, handlePluginMessage, reloadPlugins };
+/**
+ * Get all registered commands with their plugin names and descriptions
+ * @returns {Array<{ command: string, pluginName: string, description: string|null }>}
+ */
+export function getRegisteredCommands() {
+  const commands = [];
+  for (const [command, { pluginName, description }] of commandHandlers) {
+    commands.push({ command, pluginName, description });
+  }
+  return commands;
+}
+
+export default { loadPlugins, handlePluginMessage, reloadPlugins, getRegisteredCommands };
