@@ -201,6 +201,11 @@ async function sendRecurringReminder(recurring) {
  * Schedule a recurring reminder for its next occurrence
  */
 function scheduleRecurring(recurring) {
+  // Clear any existing timeout to prevent duplicates
+  if (activeTimeouts.has(recurring.id)) {
+    clearTimeout(activeTimeouts.get(recurring.id));
+  }
+
   const next = getNextOccurrence(recurring.hour, recurring.minute);
   const delay = next.getTime() - Date.now();
 
