@@ -438,45 +438,55 @@ export default {
 
     reminders: async (msg, { reply }) => {
       const reminders = loadReminders().filter(r => r.userId === msg.userId);
-      
+
       if (reminders.length === 0) {
         await reply("No pending reminders. Use `.reminder <text> <time>` to set one!");
         return;
       }
-      
-      const lines = reminders.map(r => {
+
+      const lines = reminders.map((r, i) => {
         const timeLeft = new Date(r.triggerAt).getTime() - Date.now();
         const status = timeLeft > 0 ? `in ${formatDuration(timeLeft)}` : "sending soon";
-        return `• [${r.id}] "${r.text}" — ${status}`;
+        return `${i + 1}. "${r.text}" — ${status}`;
       });
-      
-      await reply(`⏰ Your reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <id>\``);
+
+      await reply(`⏰ Your reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <number>\``);
     },
 
     cancelreminder: async (msg, { reply }) => {
-      const id = msg.text.replace(/^\.cancelreminder\s*/i, "").trim();
+      const input = msg.text.replace(/^\.cancelreminder\s*/i, "").trim();
 
-      if (!id) {
-        await reply("Usage: `.cancelreminder <id>`\nUse `.reminders` or `.recurring` to see your reminder IDs.");
+      if (!input) {
+        await reply("Usage: `.cancelreminder <id or number>`\nUse `.reminders` or `.recurring` to see your reminders.");
         return;
       }
 
       // Check one-time reminders first
       const reminders = loadReminders();
-      const index = reminders.findIndex(r => r.id === id && r.userId === msg.userId);
+      const userReminders = reminders.filter(r => r.userId === msg.userId);
 
-      if (index !== -1) {
+      // Try to find by number (1-indexed) or by ID
+      let cancelled = null;
+      let isRecurring = false;
+      const num = parseInt(input, 10);
+
+      if (!isNaN(num) && num >= 1 && num <= userReminders.length) {
+        cancelled = userReminders[num - 1];
+      } else {
+        cancelled = userReminders.find(r => r.id === input);
+      }
+
+      if (cancelled) {
         // Cancel timeout if active
-        if (activeTimeouts.has(id)) {
-          clearTimeout(activeTimeouts.get(id));
-          activeTimeouts.delete(id);
+        if (activeTimeouts.has(cancelled.id)) {
+          clearTimeout(activeTimeouts.get(cancelled.id));
+          activeTimeouts.delete(cancelled.id);
         }
 
-        const cancelled = reminders[index];
         saveToHistory(cancelled, "cancelled");
 
-        reminders.splice(index, 1);
-        saveReminders(reminders);
+        const updatedReminders = reminders.filter(r => r.id !== cancelled.id);
+        saveReminders(updatedReminders);
 
         await reply(`✅ Cancelled reminder: "${cancelled.text}"`);
         return;
@@ -484,25 +494,32 @@ export default {
 
       // Check recurring reminders
       const recurring = loadRecurring();
-      const recurIndex = recurring.findIndex(r => r.id === id && r.userId === msg.userId);
+      const userRecurring = recurring.filter(r => r.userId === msg.userId);
 
-      if (recurIndex !== -1) {
-        if (activeTimeouts.has(id)) {
-          clearTimeout(activeTimeouts.get(id));
-          activeTimeouts.delete(id);
+      if (!isNaN(num) && num >= 1 && num <= userRecurring.length) {
+        cancelled = userRecurring[num - 1];
+        isRecurring = true;
+      } else {
+        cancelled = userRecurring.find(r => r.id === input);
+        if (cancelled) isRecurring = true;
+      }
+
+      if (cancelled && isRecurring) {
+        if (activeTimeouts.has(cancelled.id)) {
+          clearTimeout(activeTimeouts.get(cancelled.id));
+          activeTimeouts.delete(cancelled.id);
         }
 
-        const cancelled = recurring[recurIndex];
         saveToHistory(cancelled, "cancelled");
 
-        recurring.splice(recurIndex, 1);
-        saveRecurring(recurring);
+        const updatedRecurring = recurring.filter(r => r.id !== cancelled.id);
+        saveRecurring(updatedRecurring);
 
         await reply(`✅ Cancelled recurring reminder: "${cancelled.text}"`);
         return;
       }
 
-      await reply(`❌ Reminder with ID "${id}" not found.`);
+      await reply(`❌ Reminder "${input}" not found.`);
     },
 
     every: async (msg, { reply, channels }) => {
@@ -561,13 +578,13 @@ export default {
         return;
       }
 
-      const lines = all.map(r => {
+      const lines = all.map((r, i) => {
         const next = getNextOccurrence(r.hour, r.minute);
         const delay = next.getTime() - Date.now();
-        return `• [${r.id}] "${r.text}" — daily at ${formatClockTime(r.hour, r.minute)} (next in ${formatDuration(delay)})`;
+        return `${i + 1}. "${r.text}" — daily at ${formatClockTime(r.hour, r.minute)} (next in ${formatDuration(delay)})`;
       });
 
-      await reply(`🔁 Your recurring reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <id>\``);
+      await reply(`🔁 Your recurring reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <number>\``);
     },
 
     reminderlog: async (msg, { reply }) => {
