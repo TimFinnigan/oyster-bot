@@ -612,4 +612,13 @@ export default {
     restoreReminders();
     restoreRecurring();
   },
+
+  // Clean up all active timeouts on shutdown/reload
+  destroy: () => {
+    for (const timeoutId of activeTimeouts.values()) {
+      clearTimeout(timeoutId);
+    }
+    activeTimeouts.clear();
+    console.log("[reminder] Cleared all active timeouts");
+  },
 };

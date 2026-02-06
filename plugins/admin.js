@@ -21,7 +21,7 @@
  */
 
 import { exec, execSync } from "child_process";
-import { reloadPlugins } from "../src/plugin-loader.js";
+import { reloadPlugins, destroyPlugins } from "../src/plugin-loader.js";
 import { runClaude } from "../src/claude.js";
 
 const GIT_CWD = { cwd: process.cwd(), encoding: "utf8" };
@@ -104,6 +104,7 @@ export default {
      */
     async stop(msg, { reply }) {
       await reply("Stopping bot...");
+      await destroyPlugins();
       process.exit(0);
     },
 

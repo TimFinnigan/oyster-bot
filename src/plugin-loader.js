@@ -401,4 +401,26 @@ export function getRegisteredCommands() {
   return commands;
 }
 
-export default { loadPlugins, handlePluginMessage, reloadPlugins, getRegisteredCommands };
+/**
+ * Run all plugin destroy handlers and stop scheduled tasks.
+ * Called during graceful shutdown to clean up timers, connections, etc.
+ */
+export async function destroyPlugins() {
+  for (const { name, handler } of destroyHandlers) {
+    try {
+      await handler();
+      console.log(`[plugins] Destroyed: ${name}`);
+    } catch (err) {
+      console.error(`[plugins] Destroy error (${name}):`, err.message);
+    }
+  }
+  for (const task of scheduledTasks) {
+    try {
+      task.stop();
+    } catch (err) {
+      // Ignore stop errors
+    }
+  }
+}
+
+export default { loadPlugins, handlePluginMessage, reloadPlugins, getRegisteredCommands, destroyPlugins };
