@@ -8,7 +8,7 @@
 import config from "./config.js";
 import { runClaude } from "./claude.js";
 import { createChannels } from "./channels/index.js";
-import { loadPlugins, handlePluginMessage } from "./plugin-loader.js";
+import { loadPlugins, handlePluginMessage, destroyPlugins } from "./plugin-loader.js";
 import { getSessionKey } from "./types/message.js";
 
 // Per-session tracking: sessionKey -> Claude sessionId
@@ -194,6 +194,7 @@ async function start() {
   // Graceful shutdown
   const shutdown = async (signal) => {
     console.log(`\n[app] Received ${signal}, shutting down...`);
+    await destroyPlugins();
     for (const [type, channel] of channels) {
       await channel.stop();
       console.log(`[app] Stopped channel: ${type}`);
