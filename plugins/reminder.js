@@ -27,6 +27,8 @@ const activeTimeouts = new Map();
 
 // Store references for sending reminders
 let _channels = null;
+let _registerNotification = null;
+let _unregisterNotification = null;
 
 /**
  * Ensure data directory exists
@@ -211,6 +213,15 @@ function scheduleRecurring(recurring) {
 
   const timeoutId = setTimeout(() => sendRecurringReminder(recurring), delay);
   activeTimeouts.set(recurring.id, timeoutId);
+  if (_registerNotification) {
+    _registerNotification(recurring.id, {
+      pluginName: "reminder",
+      label: recurring.text,
+      type: "recurring",
+      nextAt: next.toISOString(),
+      meta: { hour: recurring.hour, minute: recurring.minute },
+    });
+  }
 }
 
 /**
@@ -313,6 +324,7 @@ async function sendReminder(reminder) {
   const reminders = loadReminders().filter(r => r.id !== reminder.id);
   saveReminders(reminders);
   activeTimeouts.delete(reminder.id);
+  if (_unregisterNotification) _unregisterNotification(reminder.id);
 }
 
 /**
@@ -336,15 +348,23 @@ function scheduleReminder(reminder) {
   const now = Date.now();
   const triggerAt = new Date(reminder.triggerAt).getTime();
   const delay = triggerAt - now;
-  
+
   if (delay <= 0) {
     // Already past due, send immediately
     sendReminder(reminder);
     return;
   }
-  
+
   const timeoutId = setTimeout(() => sendReminder(reminder), delay);
   activeTimeouts.set(reminder.id, timeoutId);
+  if (_registerNotification) {
+    _registerNotification(reminder.id, {
+      pluginName: "reminder",
+      label: reminder.text,
+      type: "reminder",
+      nextAt: reminder.triggerAt,
+    });
+  }
 }
 
 /**
@@ -485,6 +505,7 @@ export default {
         }
 
         saveToHistory(cancelled, "cancelled");
+        if (_unregisterNotification) _unregisterNotification(cancelled.id);
 
         const updatedReminders = reminders.filter(r => r.id !== cancelled.id);
         saveReminders(updatedReminders);
@@ -512,6 +533,7 @@ export default {
         }
 
         saveToHistory(cancelled, "cancelled");
+        if (_unregisterNotification) _unregisterNotification(cancelled.id);
 
         const updatedRecurring = recurring.filter(r => r.id !== cancelled.id);
         saveRecurring(updatedRecurring);
@@ -608,8 +630,10 @@ export default {
   },
 
   // Initialize plugin and restore pending reminders on startup
-  init: async ({ channels }) => {
+  init: async ({ channels, registerNotification, unregisterNotification }) => {
     _channels = channels;
+    _registerNotification = registerNotification || null;
+    _unregisterNotification = unregisterNotification || null;
     restoreReminders();
     restoreRecurring();
   },
