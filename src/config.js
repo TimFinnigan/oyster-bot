@@ -48,6 +48,9 @@ export const config = {
 
   // Global settings
   maxMessageLength: Number(process.env.MAX_MESSAGE_LENGTH) || 4096,
+  ai: {
+    provider: (process.env.AI_PROVIDER || "claude").toLowerCase(),
+  },
 
   // Claude CLI
   claude: {
@@ -66,6 +69,14 @@ export const config = {
     allowedDirectories: process.env.CLAUDE_ALLOWED_DIRECTORIES
       ? process.env.CLAUDE_ALLOWED_DIRECTORIES.split(",").map((d) => d.trim())
       : null,
+  },
+
+  // Codex CLI
+  codex: {
+    path: process.env.CODEX_PATH || "codex",
+    timeoutMs: Number(process.env.CODEX_TIMEOUT_MS) || 180_000, // 3 minutes
+    model: process.env.CODEX_MODEL || null,
+    extraPath: process.env.CODEX_EXTRA_PATH || "/usr/local/bin:/opt/homebrew/bin",
   },
 
   // Plugins

@@ -13,7 +13,6 @@
  */
 
 import { execSync } from "child_process";
-import { runClaude } from "../src/claude.js";
 
 const GIT_CWD = { cwd: process.cwd(), encoding: "utf8" };
 const MAX_DIFF_CHARS = 8000;
@@ -95,7 +94,7 @@ export default {
       }
     },
 
-    async branch(msg, { reply }) {
+    async branch(msg, { reply, claude }) {
       const args = parseArgs(msg);
       let name = args.join(" ");
 
@@ -119,7 +118,7 @@ export default {
 
             try {
               const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps\n\nChanges:\n${diff}`;
-              const result = await runClaude(prompt);
+              const result = await claude(prompt);
               name = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
               name = name?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
             } catch (e) {
@@ -150,7 +149,7 @@ export default {
       }
     },
 
-    async commit(msg, { reply }) {
+    async commit(msg, { reply, claude }) {
       try {
         execSync("git add -A", GIT_CWD);
 
@@ -174,7 +173,7 @@ export default {
           const prompt = `Generate a concise git commit message (1 line, max 72 chars) for these changes. Follow conventional commits style (feat:, fix:, chore:, etc). Reply with ONLY the commit message, nothing else.\n\n${diff}`;
 
           try {
-            const result = await runClaude(prompt);
+            const result = await claude(prompt);
             message = result.result?.trim() || "Update from Telegram";
             message = message.replace(/^["'`]+|["'`]+$/g, "").trim();
           } catch (e) {
@@ -203,7 +202,7 @@ export default {
       }
     },
 
-    async pr(msg, { reply }) {
+    async pr(msg, { reply, claude }) {
       const args = parseArgs(msg);
       let title = args.join(" ");
 
@@ -251,7 +250,7 @@ BODY:
 
         let body = "";
         try {
-          const result = await runClaude(prompt);
+          const result = await claude(prompt);
           const response = result.result?.trim() || "";
 
           const titleMatch = response.match(/TITLE:\s*(.+)/);
@@ -335,7 +334,7 @@ BODY:
       }
     },
 
-    async ship(msg, { reply }) {
+    async ship(msg, { reply, claude }) {
       try {
         const args = parseArgs(msg);
 
@@ -368,7 +367,7 @@ BODY:
 
             try {
               const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps, docs/api-reference\n\nChanges:\n${diff}`;
-              const result = await runClaude(prompt);
+              const result = await claude(prompt);
               branchName = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
               branchName = branchName?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
             } catch (e) {
@@ -403,7 +402,7 @@ BODY:
           let commitMsg = "Update from Telegram";
           try {
             const prompt = `Generate a concise git commit message (1 line, max 72 chars) for these changes. Follow conventional commits style (feat:, fix:, chore:, etc). Reply with ONLY the commit message, nothing else.\n\n${diff}`;
-            const result = await runClaude(prompt);
+            const result = await claude(prompt);
             commitMsg = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim() || commitMsg;
           } catch (e) {
             console.error("[git] Failed to generate commit message:", e.message);
@@ -463,7 +462,7 @@ BODY:
 - Key changes (bullet points)
 - Any notes for reviewers>`;
 
-            const result = await runClaude(prompt);
+            const result = await claude(prompt);
             const response = result.result?.trim() || "";
 
             const titleMatch = response.match(/TITLE:\s*(.+)/);
