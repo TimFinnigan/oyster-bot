@@ -355,21 +355,22 @@ function restoreReminders() {
   const now = Date.now();
   let restored = 0;
   let expired = 0;
-  
+
   for (const reminder of reminders) {
     const triggerAt = new Date(reminder.triggerAt).getTime();
     if (triggerAt > now) {
       scheduleReminder(reminder);
       restored++;
     } else {
-      // Expired while bot was offline - send now
-      sendReminder(reminder);
+      // Expired while bot was offline - stagger sends to avoid burst
+      const staggerDelay = expired * 500;
+      setTimeout(() => sendReminder(reminder), staggerDelay);
       expired++;
     }
   }
-  
+
   if (restored > 0 || expired > 0) {
-    console.log(`[reminder] Restored ${restored} pending reminder(s), sent ${expired} expired reminder(s)`);
+    console.log(`[reminder] Restored ${restored} pending reminder(s), sending ${expired} expired reminder(s) (staggered)`);
   }
 }
 
