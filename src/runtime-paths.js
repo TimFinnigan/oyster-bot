@@ -1,9 +1,20 @@
-import { isAbsolute, resolve } from "path";
+import { homedir } from "os";
+import { dirname, isAbsolute, resolve } from "path";
+import { fileURLToPath } from "url";
+
+const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function expandHomeDir(input) {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return resolve(homedir(), input.slice(2));
+  return input;
+}
 
 function resolvePath(input, fallback) {
   const raw = (input || fallback || "").trim();
-  if (!raw) return resolve(process.cwd());
-  return isAbsolute(raw) ? raw : resolve(process.cwd(), raw);
+  if (!raw) return appRoot;
+  const expanded = expandHomeDir(raw);
+  return isAbsolute(expanded) ? expanded : resolve(appRoot, expanded);
 }
 
 function parsePathList(input) {
@@ -31,4 +42,3 @@ export function getPluginDirs(config = null) {
 
   return [resolvePath(process.env.PLUGIN_DIR, "./plugins")];
 }
-

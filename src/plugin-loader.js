@@ -1,4 +1,4 @@
-import { readdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
+import { readdirSync, existsSync, readFileSync, writeFileSync, statSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import cron from "node-cron";
@@ -50,6 +50,57 @@ function loadJsonArray(filePath) {
   } catch (err) {
     console.error(`[plugins] Failed to read JSON array from ${filePath}:`, err.message);
     return [];
+  }
+}
+
+function mergeSuggestionArrays(arrays) {
+  const merged = [];
+  const seen = new Set();
+  for (const list of arrays) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const key = JSON.stringify({
+        name: item.name || "",
+        description: item.description || "",
+        complexity: item.complexity || "",
+        suggestedAt: item.suggestedAt || "",
+      });
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  merged.sort((a, b) => {
+    const at = new Date(a?.suggestedAt || 0).getTime();
+    const bt = new Date(b?.suggestedAt || 0).getTime();
+    return at - bt;
+  });
+  return merged;
+}
+
+function reconcileEvolveSuggestions(sourcePluginPath = null) {
+  try {
+    const targetFile = join(getDataDir(_config), "evolve-suggestions.json");
+    const candidateFiles = [targetFile];
+
+    if (sourcePluginPath) {
+      const sourceFile = join(dirname(sourcePluginPath), "..", "..", "data", "evolve-suggestions.json");
+      if (!candidateFiles.includes(sourceFile)) {
+        candidateFiles.push(sourceFile);
+      }
+    }
+
+    const merged = mergeSuggestionArrays(candidateFiles.map((file) => loadJsonArray(file)));
+    const current = loadJsonArray(targetFile);
+
+    if (JSON.stringify(current) !== JSON.stringify(merged)) {
+      mkdirSync(dirname(targetFile), { recursive: true });
+      writeFileSync(targetFile, JSON.stringify(merged, null, 2));
+      console.log(`[plugins] Reconciled evolve suggestions (${merged.length} ideas)`);
+    }
+  } catch (err) {
+    console.error("[plugins] Evolve suggestions reconcile failed:", err.message);
   }
 }
 
@@ -164,19 +215,54 @@ function getRegisteredNotifications() {
 function discoverPluginFiles() {
   const files = [];
   const pluginDirs = getPluginDirs(_config);
-  for (const dir of pluginDirs) {
+  console.log(`[plugins] Scanning directories: ${pluginDirs.join(", ") || "(none)"}`);
+
+  const walk = (dir) => {
+    let entries;
     try {
-      if (!existsSync(dir)) continue;
-      const entries = readdirSync(dir).filter((f) => f.endsWith(".js"));
-      for (const f of entries) {
-        files.push(join(dir, f));
-      }
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      if (err.code !== "ENOENT") {
+      if (err.code === "ENOENT") {
+        console.warn(`[plugins] Directory not found: ${dir}`);
+      } else {
         console.error(`[plugins] Error reading ${dir}:`, err.message);
       }
+      return;
     }
+
+    for (const entry of entries) {
+      const entryPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(entryPath);
+        continue;
+      }
+
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = statSync(entryPath);
+          if (target.isDirectory()) {
+            walk(entryPath);
+            continue;
+          }
+          if (target.isFile() && /\.(?:cjs|mjs|js)$/i.test(entry.name)) {
+            files.push(entryPath);
+          }
+        } catch (err) {
+          console.warn(`[plugins] Failed to follow symlink: ${entryPath} (${err.message})`);
+        }
+        continue;
+      }
+
+      if (/\.(?:cjs|mjs|js)$/i.test(entry.name)) {
+        files.push(entryPath);
+      }
+    }
+  };
+
+  for (const dir of pluginDirs) {
+    walk(dir);
   }
+
   return files;
 }
 
@@ -221,6 +307,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
             handler,
             pluginName: plugin.name,
             description: helpMap[cmdName] || null,
+            pluginFilePath: filePath,
           });
           console.log(`[plugins]   Registered command: .${cmdName}`);
         }
@@ -297,6 +384,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
   }
 
   reconcileBusinessIdeas({ force: true });
+  reconcileEvolveSuggestions();
   if (businessIdeasReconcileInterval) {
     clearInterval(businessIdeasReconcileInterval);
     businessIdeasReconcileInterval = null;
@@ -373,6 +461,9 @@ export async function handlePluginMessage(msg) {
         await cmd.handler(msg, helpers);
         if (cmdName === "idea" || cmdName === "cook" || cmdName === "idealist") {
           reconcileBusinessIdeas({ force: true });
+        }
+        if (cmdName === "evolve") {
+          reconcileEvolveSuggestions(cmd.pluginFilePath);
         }
         return true;
       } catch (err) {
@@ -463,6 +554,7 @@ export async function reloadPlugins() {
             handler,
             pluginName: plugin.name,
             description: helpMap[cmdName] || null,
+            pluginFilePath: filePath,
           });
           console.log(`[plugins]   Registered command: .${cmdName}`);
         }
@@ -542,6 +634,7 @@ export async function reloadPlugins() {
 
   console.log(`[plugins] Reloaded ${loadedPlugins.length} plugin(s): ${loadedPlugins.join(", ") || "none"}`);
   reconcileBusinessIdeas({ force: true });
+  reconcileEvolveSuggestions();
   businessIdeasReconcileInterval = setInterval(() => {
     reconcileBusinessIdeas();
   }, 60_000);
