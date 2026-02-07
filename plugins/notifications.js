@@ -25,6 +25,46 @@ function formatClockTime(hour, minute) {
     : `${displayHour}:${String(minute).padStart(2, "0")}${period}`;
 }
 
+function parseIntegerField(value, min, max) {
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return null;
+  return parsed;
+}
+
+function formatCronSchedule(cronExpr) {
+  const parts = String(cronExpr || "").trim().split(/\s+/);
+  if (parts.length !== 5 && parts.length !== 6) return `schedule: \`${cronExpr}\``;
+
+  // Support both 5-field and 6-field formats; ignore seconds when present.
+  const [minuteField, hourField, dayOfMonthField, monthField, dayOfWeekField] =
+    parts.length === 6 ? parts.slice(1) : parts;
+
+  const minute = parseIntegerField(minuteField, 0, 59);
+  const hour = parseIntegerField(hourField, 0, 23);
+
+  if (minute !== null && hour !== null) {
+    const atTime = formatClockTime(hour, minute);
+    if (dayOfMonthField === "*" && monthField === "*" && dayOfWeekField === "*") {
+      return `daily at ${atTime} (local time)`;
+    }
+    return `at ${atTime} (local time, cron: \`${cronExpr}\`)`;
+  }
+
+  if (/^\*\/\d+$/.test(minuteField) && hourField === "*" && dayOfMonthField === "*" && monthField === "*" && dayOfWeekField === "*") {
+    const interval = Number(minuteField.slice(2));
+    if (interval > 0) {
+      return `every ${interval} minute${interval === 1 ? "" : "s"} (local time)`;
+    }
+  }
+
+  if (minute !== null && hourField === "*" && dayOfMonthField === "*" && monthField === "*" && dayOfWeekField === "*") {
+    return `hourly at :${String(minute).padStart(2, "0")} (local time)`;
+  }
+
+  return `schedule: \`${cronExpr}\``;
+}
+
 export default {
   name: "notifications",
 
@@ -74,7 +114,7 @@ export default {
       if (schedules.length > 0) {
         const lines = schedules.map((s, i) => {
           const label = s.label || s.pluginName;
-          return `  ${i + 1}. ${label} — ${s.cron}`;
+          return `  ${i + 1}. ${label} — ${formatCronSchedule(s.cron)}`;
         });
         sections.push(`🕐 Scheduled tasks\n${lines.join("\n")}`);
       }
