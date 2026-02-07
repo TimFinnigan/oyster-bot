@@ -96,6 +96,8 @@ export const config = {
     targetChannel: process.env.PLUGIN_TARGET_CHANNEL || "telegram",
     // Weather plugin default location
     weatherDefaultLocation: process.env.WEATHER_DEFAULT_LOCATION || null,
+    // Temperature units: "fahrenheit" or "celsius"
+    weatherUnits: process.env.WEATHER_UNITS || "fahrenheit",
   },
 
   // Legacy access for backward compatibility
