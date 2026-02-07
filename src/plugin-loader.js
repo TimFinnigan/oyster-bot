@@ -29,11 +29,40 @@ const commandHandlers = new Map();
 const messageHandlers = [];
 // Track scheduled tasks so we can stop them on reload
 const scheduledTasks = [];
+// Track schedule metadata for introspection (plugin name + cron expression)
+const scheduleRegistry = [];
 // Track plugin destroy functions for cleanup on reload
 const destroyHandlers = [];
+// Notification registry: plugins register active notifications for cross-plugin visibility
+// Map<string, { pluginName, label, type, nextAt?, meta? }>
+const notificationRegistry = new Map();
 
 // Store references for use in handlers
 let _runClaude, _config, _channels;
+
+/**
+ * Register an active notification (reminder, scheduled task, etc.) for cross-plugin visibility.
+ * @param {string} id - Unique ID for this notification
+ * @param {Object} info - { pluginName, label, type, nextAt?, meta? }
+ */
+function registerNotification(id, info) {
+  notificationRegistry.set(id, info);
+}
+
+/**
+ * Remove a notification from the registry.
+ * @param {string} id - The notification ID to remove
+ */
+function unregisterNotification(id) {
+  notificationRegistry.delete(id);
+}
+
+/**
+ * Get all registered notifications from all plugins.
+ */
+function getRegisteredNotifications() {
+  return [...notificationRegistry.values()];
+}
 
 /**
  * Discover plugin files from plugins/ and plugins/local/ directories.
@@ -114,16 +143,21 @@ export async function loadPlugins({ channels, config, runClaude }) {
           const task = cron.schedule(schedule.cron, async () => {
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
-              await schedule.handler({ 
-                channels: _channels, 
-                config: _config, 
-                claude: _runClaude 
+              await schedule.handler({
+                channels: _channels,
+                config: _config,
+                claude: _runClaude
               });
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
           });
           scheduledTasks.push(task);
+          scheduleRegistry.push({
+            pluginName: plugin.name,
+            cron: schedule.cron,
+            label: schedule.label || null,
+          });
           console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
         }
       }
@@ -153,6 +187,8 @@ export async function loadPlugins({ channels, config, runClaude }) {
             channels: _channels,
             config: _config,
             claude: _runClaude,
+            registerNotification,
+            unregisterNotification,
           });
           console.log(`[plugins]   Initialized`);
         } catch (err) {
@@ -217,6 +253,10 @@ export async function handlePluginMessage(msg) {
     channel,
     channels: _channels,
     getRegisteredCommands,
+    getRegisteredSchedules,
+    registerNotification,
+    unregisterNotification,
+    getRegisteredNotifications,
   };
   
   // Handle .commands
@@ -280,6 +320,8 @@ export async function reloadPlugins() {
     }
   }
   scheduledTasks.length = 0;
+  scheduleRegistry.length = 0;
+  notificationRegistry.clear();
 
   // Clear existing handlers
   commandHandlers.clear();
@@ -337,6 +379,11 @@ export async function reloadPlugins() {
             }
           });
           scheduledTasks.push(task);
+          scheduleRegistry.push({
+            pluginName: plugin.name,
+            cron: schedule.cron,
+            label: schedule.label || null,
+          });
           console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
         }
       }
@@ -366,6 +413,8 @@ export async function reloadPlugins() {
             channels: _channels,
             config: _config,
             claude: _runClaude,
+            registerNotification,
+            unregisterNotification,
           });
           console.log(`[plugins]   Initialized`);
         } catch (err) {
@@ -402,6 +451,13 @@ export function getRegisteredCommands() {
 }
 
 /**
+ * Get all registered schedules with their plugin names and cron expressions
+ */
+export function getRegisteredSchedules() {
+  return [...scheduleRegistry];
+}
+
+/**
  * Run all plugin destroy handlers and stop scheduled tasks.
  * Called during graceful shutdown to clean up timers, connections, etc.
  */
@@ -423,4 +479,4 @@ export async function destroyPlugins() {
   }
 }
 
-export default { loadPlugins, handlePluginMessage, reloadPlugins, getRegisteredCommands, destroyPlugins };
+export default { loadPlugins, handlePluginMessage, reloadPlugins, getRegisteredCommands, getRegisteredSchedules, getRegisteredNotifications, destroyPlugins };
