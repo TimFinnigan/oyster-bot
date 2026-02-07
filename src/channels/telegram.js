@@ -16,6 +16,24 @@ export class TelegramChannel extends BaseChannel {
     this.bot = null;
   }
 
+  /**
+   * Retry a Telegram API call on transient network errors
+   */
+  async _retry(fn, attempts = 3) {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        const code = err.code || err.response?.error_code;
+        const transient = ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND"].includes(code) || code === 429;
+        if (!transient || i === attempts - 1) throw err;
+        const delay = 1000 * (i + 1);
+        console.log(`[telegram] Retrying after ${code} (attempt ${i + 2}/${attempts}, wait ${delay}ms)`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
   async start() {
     this.bot = new Telegraf(this.config.botToken, {
       handlerTimeout: this.config.handlerTimeout || 300_000,
@@ -27,7 +45,7 @@ export class TelegramChannel extends BaseChannel {
     });
 
     // Handle all text messages
-    this.bot.on("text", (ctx) => {
+    this.bot.on("text", async (ctx) => {
       if (!this.onMessage) return;
 
       const msg = createMessage({
@@ -43,11 +61,11 @@ export class TelegramChannel extends BaseChannel {
         raw: ctx,
       });
 
-      this.onMessage(msg);
+      await this.onMessage(msg);
     });
 
     // Handle location messages
-    this.bot.on("location", (ctx) => {
+    this.bot.on("location", async (ctx) => {
       if (!this.onMessage) return;
 
       const { latitude, longitude } = ctx.message.location;
@@ -65,10 +83,10 @@ export class TelegramChannel extends BaseChannel {
         raw: ctx,
       });
 
-      this.onMessage(msg);
+      await this.onMessage(msg);
     });
 
-    await this.bot.launch();
+    await this.bot.launch({ dropPendingUpdates: true });
     console.log(`[telegram] Channel started`);
   }
 
@@ -83,12 +101,14 @@ export class TelegramChannel extends BaseChannel {
     if (!this.bot) throw new Error("Telegram bot not started");
     try {
       const formatted = toTelegramMarkdownV2(text);
-      await this.bot.telegram.sendMessage(channelId, formatted, {
-        parse_mode: "MarkdownV2",
-      });
+      await this._retry(() =>
+        this.bot.telegram.sendMessage(channelId, formatted, { parse_mode: "MarkdownV2" })
+      );
     } catch {
       // Fallback to plain text if MarkdownV2 parsing fails
-      await this.bot.telegram.sendMessage(channelId, stripMarkdown(text));
+      await this._retry(() =>
+        this.bot.telegram.sendMessage(channelId, stripMarkdown(text))
+      );
     }
   }
 
@@ -105,14 +125,18 @@ export class TelegramChannel extends BaseChannel {
     if (!this.bot) throw new Error("Telegram bot not started");
     try {
       const formatted = toTelegramMarkdownV2(text);
-      await this.bot.telegram.sendMessage(channelId, formatted, {
-        parse_mode: "MarkdownV2",
-        reply_to_message_id: Number(messageId),
-      });
+      await this._retry(() =>
+        this.bot.telegram.sendMessage(channelId, formatted, {
+          parse_mode: "MarkdownV2",
+          reply_to_message_id: Number(messageId),
+        })
+      );
     } catch {
-      await this.bot.telegram.sendMessage(channelId, stripMarkdown(text), {
-        reply_to_message_id: Number(messageId),
-      });
+      await this._retry(() =>
+        this.bot.telegram.sendMessage(channelId, stripMarkdown(text), {
+          reply_to_message_id: Number(messageId),
+        })
+      );
     }
   }
 
@@ -120,19 +144,23 @@ export class TelegramChannel extends BaseChannel {
     if (!this.bot) throw new Error("Telegram bot not started");
     try {
       const formatted = toTelegramMarkdownV2(newText);
-      await this.bot.telegram.editMessageText(
-        channelId,
-        Number(messageId),
-        undefined,
-        formatted,
-        { parse_mode: "MarkdownV2" }
+      await this._retry(() =>
+        this.bot.telegram.editMessageText(
+          channelId,
+          Number(messageId),
+          undefined,
+          formatted,
+          { parse_mode: "MarkdownV2" }
+        )
       );
     } catch {
-      await this.bot.telegram.editMessageText(
-        channelId,
-        Number(messageId),
-        undefined,
-        stripMarkdown(newText)
+      await this._retry(() =>
+        this.bot.telegram.editMessageText(
+          channelId,
+          Number(messageId),
+          undefined,
+          stripMarkdown(newText)
+        )
       );
     }
   }
