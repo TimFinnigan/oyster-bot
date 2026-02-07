@@ -9,10 +9,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { getDataDir } from "../src/runtime-paths.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DIARY_FILE = join(__dirname, "..", "data", "food-diary.json");
+const DIARY_FILE = join(getDataDir(), "food-diary.json");
 
 // Track users waiting to input food (keyed by channelType:userId)
 const waitingForFood = new Set();

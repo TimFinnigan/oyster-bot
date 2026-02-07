@@ -15,12 +15,12 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { getDataDir } from "../src/runtime-paths.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REMINDERS_FILE = join(__dirname, "..", "data", "reminders.json");
-const HISTORY_FILE = join(__dirname, "..", "data", "reminder-history.json");
-const RECURRING_FILE = join(__dirname, "..", "data", "recurring-reminders.json");
+const DATA_DIR = getDataDir();
+const REMINDERS_FILE = join(DATA_DIR, "reminders.json");
+const HISTORY_FILE = join(DATA_DIR, "reminder-history.json");
+const RECURRING_FILE = join(DATA_DIR, "recurring-reminders.json");
 
 // Active timeout IDs for cancellation (keyed by reminder ID)
 const activeTimeouts = new Map();

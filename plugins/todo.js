@@ -10,10 +10,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { getDataDir } from "../src/runtime-paths.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const TODO_FILE = join(__dirname, "..", "data", "todos.json");
+const TODO_FILE = join(getDataDir(), "todos.json");
 
 const waitingForTodo = new Set();
 

@@ -1,11 +1,11 @@
-import { readdirSync, existsSync } from "fs";
+import { readdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import cron from "node-cron";
+import { getDataDir, getPluginDirs } from "./runtime-paths.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PLUGINS_DIR = join(__dirname, "..", "plugins");
-const LOCAL_PLUGINS_DIR = join(PLUGINS_DIR, "local");
+const DEFAULT_BUSINESS_IDEAS_OUTPUT_DIR = join(__dirname, "..", "..", "business-ideas");
 
 /**
  * Plugin Loader (Channel-Agnostic)
@@ -36,9 +36,102 @@ const destroyHandlers = [];
 // Notification registry: plugins register active notifications for cross-plugin visibility
 // Map<string, { pluginName, label, type, nextAt?, meta? }>
 const notificationRegistry = new Map();
+let businessIdeasReconcileInterval = null;
+let lastBusinessIdeasReconcileAt = 0;
 
 // Store references for use in handlers
 let _runClaude, _config, _channels;
+
+function loadJsonArray(filePath) {
+  try {
+    if (!existsSync(filePath)) return [];
+    const data = JSON.parse(readFileSync(filePath, "utf-8"));
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.error(`[plugins] Failed to read JSON array from ${filePath}:`, err.message);
+    return [];
+  }
+}
+
+function normalizeIdea(idea) {
+  return {
+    name: idea?.name || "",
+    tagline: idea?.tagline || "",
+    problem: idea?.problem || "",
+    solution: idea?.solution || "",
+    features: Array.isArray(idea?.features) ? idea.features : [],
+    audience: idea?.audience || "",
+    revenueModel: idea?.revenueModel || "",
+    niche: idea?.niche || "general",
+    heroGradient: Array.isArray(idea?.heroGradient) ? idea.heroGradient : undefined,
+    accentColor: idea?.accentColor,
+    slug: idea?.slug || "",
+    createdAt: idea?.createdAt || "",
+    path: idea?.path || "",
+  };
+}
+
+function reconcileBusinessIdeas({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastBusinessIdeasReconcileAt < 15_000) return;
+  lastBusinessIdeasReconcileAt = now;
+
+  try {
+    const businessIdeasOutputDir = _config?.paths?.businessIdeasOutputDir || process.env.BUSINESS_IDEAS_OUTPUT_DIR || DEFAULT_BUSINESS_IDEAS_OUTPUT_DIR;
+    const businessIdeasFile = join(getDataDir(_config), "business-ideas.json");
+
+    if (!existsSync(businessIdeasOutputDir)) return;
+
+    const existing = loadJsonArray(businessIdeasFile);
+    const existingBySlug = new Map(
+      existing
+        .filter((idea) => idea && typeof idea.slug === "string" && idea.slug.length > 0)
+        .map((idea) => [idea.slug, idea])
+    );
+
+    const dirs = readdirSync(businessIdeasOutputDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+
+    const rebuilt = [];
+    for (const slug of dirs) {
+      const ideaJsonPath = join(businessIdeasOutputDir, slug, "docs", "idea.json");
+      if (!existsSync(ideaJsonPath)) continue;
+
+      let ideaFromDisk;
+      try {
+        ideaFromDisk = JSON.parse(readFileSync(ideaJsonPath, "utf-8"));
+      } catch (err) {
+        console.error(`[plugins] Skipping invalid idea JSON (${ideaJsonPath}):`, err.message);
+        continue;
+      }
+
+      const existingIdea = existingBySlug.get(slug);
+      const createdAt =
+        existingIdea?.createdAt ||
+        statSync(ideaJsonPath).mtime.toISOString();
+
+      rebuilt.push(
+        normalizeIdea({
+          ...ideaFromDisk,
+          slug,
+          createdAt,
+          path: join(businessIdeasOutputDir, slug),
+        })
+      );
+    }
+
+    rebuilt.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const existingNormalized = existing.map(normalizeIdea);
+    if (JSON.stringify(existingNormalized) !== JSON.stringify(rebuilt)) {
+      writeFileSync(businessIdeasFile, JSON.stringify(rebuilt, null, 2));
+      console.log(`[plugins] Reconciled business ideas index (${rebuilt.length} ideas)`);
+    }
+  } catch (err) {
+    console.error("[plugins] Business ideas reconcile failed:", err.message);
+  }
+}
 
 /**
  * Register an active notification (reminder, scheduled task, etc.) for cross-plugin visibility.
@@ -65,12 +158,13 @@ function getRegisteredNotifications() {
 }
 
 /**
- * Discover plugin files from plugins/ and plugins/local/ directories.
+ * Discover plugin files from configured plugin directories.
  * Returns array of absolute file paths.
  */
 function discoverPluginFiles() {
   const files = [];
-  for (const dir of [PLUGINS_DIR, LOCAL_PLUGINS_DIR]) {
+  const pluginDirs = getPluginDirs(_config);
+  for (const dir of pluginDirs) {
     try {
       if (!existsSync(dir)) continue;
       const entries = readdirSync(dir).filter((f) => f.endsWith(".js"));
@@ -202,6 +296,15 @@ export async function loadPlugins({ channels, config, runClaude }) {
     }
   }
 
+  reconcileBusinessIdeas({ force: true });
+  if (businessIdeasReconcileInterval) {
+    clearInterval(businessIdeasReconcileInterval);
+    businessIdeasReconcileInterval = null;
+  }
+  businessIdeasReconcileInterval = setInterval(() => {
+    reconcileBusinessIdeas();
+  }, 60_000);
+
   console.log(`[plugins] Loaded ${loadedPlugins.length} plugin(s): ${loadedPlugins.join(", ") || "none"}`);
   return loadedPlugins;
 }
@@ -268,6 +371,9 @@ export async function handlePluginMessage(msg) {
     if (cmd) {
       try {
         await cmd.handler(msg, helpers);
+        if (cmdName === "idea" || cmdName === "cook" || cmdName === "idealist") {
+          reconcileBusinessIdeas({ force: true });
+        }
         return true;
       } catch (err) {
         console.error(`[plugins] Error in .${cmdName}:`, err.message);
@@ -322,6 +428,10 @@ export async function reloadPlugins() {
   scheduledTasks.length = 0;
   scheduleRegistry.length = 0;
   notificationRegistry.clear();
+  if (businessIdeasReconcileInterval) {
+    clearInterval(businessIdeasReconcileInterval);
+    businessIdeasReconcileInterval = null;
+  }
 
   // Clear existing handlers
   commandHandlers.clear();
@@ -431,6 +541,10 @@ export async function reloadPlugins() {
   }
 
   console.log(`[plugins] Reloaded ${loadedPlugins.length} plugin(s): ${loadedPlugins.join(", ") || "none"}`);
+  reconcileBusinessIdeas({ force: true });
+  businessIdeasReconcileInterval = setInterval(() => {
+    reconcileBusinessIdeas();
+  }, 60_000);
   return { 
     success: errors.length === 0, 
     loaded: loadedPlugins, 
@@ -462,6 +576,10 @@ export function getRegisteredSchedules() {
  * Called during graceful shutdown to clean up timers, connections, etc.
  */
 export async function destroyPlugins() {
+  if (businessIdeasReconcileInterval) {
+    clearInterval(businessIdeasReconcileInterval);
+    businessIdeasReconcileInterval = null;
+  }
   for (const { name, handler } of destroyHandlers) {
     try {
       await handler();

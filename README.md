@@ -121,6 +121,9 @@ Create a `.env` file with the following variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `DATA_DIR` | `./data` | Directory for plugin data files (logs, reminders, todos, etc.) |
+| `PLUGIN_DIR` | `./plugins` | Primary plugin directory |
+| `PLUGIN_DIRS` | (none) | Comma-separated plugin directories. If set, overrides `PLUGIN_DIR` |
 | `PLUGIN_TARGET_CHAT_ID` | (none) | Your Telegram user ID for receiving scheduled messages |
 | `QUOTES_CRON` | `0 * * * *` | Cron schedule for quotes (default: hourly) |
 | `WEATHER_DEFAULT_LOCATION` | (none) | Default location for weather (e.g., "Seattle, WA") |
@@ -145,6 +148,11 @@ CLAUDE_ALLOWED_TOOLS=Read,Glob,Grep,WebSearch,WebFetch,Bash(git *),Bash(npm *)
 
 # Grant access to additional directories (beyond working dir)
 # CLAUDE_ALLOWED_DIRECTORIES=/Users/me/projects,/Users/me/notes
+
+# Optional runtime paths
+# DATA_DIR=./data
+# PLUGIN_DIR=./plugins
+# PLUGIN_DIRS=./plugins,./custom-plugins
 
 # Plugins: receive scheduled messages
 PLUGIN_TARGET_CHAT_ID=123456789
@@ -240,7 +248,7 @@ The PM2 config includes crash loop protection:
 
 ## Plugins
 
-The bot supports a plugin system for adding custom commands and scheduled tasks. Plugins are auto-loaded from the `plugins/` directory.
+The bot supports a plugin system for adding custom commands and scheduled tasks. Plugins are auto-loaded from `PLUGIN_DIR` (default `./plugins`) or all directories listed in `PLUGIN_DIRS`.
 
 **Note:** Plugin commands use `.` prefix (e.g., `.quote`) instead of `/` to avoid conflicts with Claude's slash commands.
 
@@ -284,6 +292,11 @@ Git workflow (commit, PR, merge from Telegram):
 
 Configure in `.env`:
 ```bash
+# Optional runtime paths
+# DATA_DIR=./data
+# PLUGIN_DIR=./plugins
+# PLUGIN_DIRS=./plugins,./custom-plugins
+
 # Your Telegram user ID (required for scheduled messages)
 PLUGIN_TARGET_CHAT_ID=123456789
 
@@ -297,7 +310,7 @@ WEATHER_CRON=0 8 * * *
 
 ### Creating Your Own Plugin
 
-Create a `.js` file in the `plugins/` folder:
+Create a `.js` file in your configured plugin directory (`PLUGIN_DIR` by default):
 
 ```javascript
 export default {
