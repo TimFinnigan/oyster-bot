@@ -9,10 +9,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { getDataDir } from "../src/runtime-paths.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = join(__dirname, "..", "data", "gratitude.json");
+const DATA_FILE = join(getDataDir(), "gratitude.json");
 
 const waitingForThanks = new Set();
 

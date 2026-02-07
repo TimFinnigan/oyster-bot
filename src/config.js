@@ -1,6 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { getDataDir, getPluginDirs } from "./runtime-paths.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: join(__dirname, "..", ".env") });
@@ -77,6 +78,12 @@ export const config = {
     timeoutMs: Number(process.env.CODEX_TIMEOUT_MS) || 180_000, // 3 minutes
     model: process.env.CODEX_MODEL || null,
     extraPath: process.env.CODEX_EXTRA_PATH || "/usr/local/bin:/opt/homebrew/bin",
+  },
+
+  // Runtime paths
+  paths: {
+    dataDir: getDataDir(),
+    pluginDirs: getPluginDirs(),
   },
 
   // Plugins

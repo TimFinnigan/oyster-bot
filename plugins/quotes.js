@@ -9,11 +9,10 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
+import { getDataDir } from "../src/runtime-paths.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "..", "data");
+const DATA_DIR = getDataDir();
 const QUOTES_FILE = join(DATA_DIR, "quotes-log.json");
 
 function loadPastQuotes() {
