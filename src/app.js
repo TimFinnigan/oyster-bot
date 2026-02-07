@@ -6,15 +6,21 @@
  */
 
 import config from "./config.js";
-import { runClaude } from "./claude.js";
+import { runAI, getConfiguredProvider, normalizeProvider, SUPPORTED_AI_PROVIDERS } from "./ai.js";
 import { createChannels } from "./channels/index.js";
 import { loadPlugins, handlePluginMessage, destroyPlugins } from "./plugin-loader.js";
 import { getSessionKey } from "./types/message.js";
 
-// Per-session tracking: sessionKey -> Claude sessionId
+// Per-session tracking: provider:sessionKey -> sessionId
 const sessions = new Map();
 // Track active requests to prevent concurrent calls per session
 const activeRequests = new Set();
+// Runtime provider can be switched via /switch
+let activeProvider = getConfiguredProvider();
+
+function getProviderSessionKey(provider, sessionKey) {
+  return `${provider}:${sessionKey}`;
+}
 
 /**
  * Split a message into chunks that fit within the limit
@@ -75,8 +81,8 @@ async function handleMessage(msg, channels) {
     return;
   }
 
-  // Route to Claude
-  await handleClaudeMessage(msg, channel);
+  // Route to AI provider
+  await handleAIMessage(msg, channel);
 }
 
 /**
@@ -84,33 +90,51 @@ async function handleMessage(msg, channels) {
  */
 async function handleCommand(msg, channel) {
   const text = msg.text.toLowerCase().trim();
+  const rawText = (msg.text || "").trim();
+  const parts = rawText.split(/\s+/);
   const sessionKey = getSessionKey(msg);
+  const providerSessionKey = getProviderSessionKey(activeProvider, sessionKey);
 
   if (text === "/start") {
     await channel.send(
       msg.channelId,
-      "Hello! I'm a Claude Code bot. Send me any message and I'll respond using Claude.\n\n" +
+      `Hello! I'm an AI CLI bot. Send me any message and I'll respond using ${activeProvider}.\n\n` +
         "Commands:\n" +
         "/start - Show this message\n" +
         "/reset - Clear conversation history\n" +
-        "/session - Show current session info"
+        "/session - Show current session info\n" +
+        "/switch <claude|codex> - Switch AI provider"
     );
     return;
   }
 
   if (text === "/reset") {
-    sessions.delete(sessionKey);
-    await channel.send(msg.channelId, "Conversation reset. Starting fresh.");
+    sessions.delete(providerSessionKey);
+    await channel.send(msg.channelId, `Conversation reset for provider: ${activeProvider}`);
     return;
   }
 
   if (text === "/session") {
-    const sessionId = sessions.get(sessionKey);
+    const sessionId = sessions.get(providerSessionKey);
     if (sessionId) {
-      await channel.send(msg.channelId, `Active session: ${sessionId}`);
+      await channel.send(msg.channelId, `Provider: ${activeProvider}\nActive session: ${sessionId}`);
     } else {
-      await channel.send(msg.channelId, "No active session. Send a message to start one.");
+      await channel.send(msg.channelId, `Provider: ${activeProvider}\nNo active session. Send a message to start one.`);
     }
+    return;
+  }
+
+  if (parts[0]?.toLowerCase() === "/switch") {
+    const requestedProvider = normalizeProvider(parts[1]);
+    if (!requestedProvider) {
+      await channel.send(
+        msg.channelId,
+        `Usage: /switch <provider>\nAvailable providers: ${SUPPORTED_AI_PROVIDERS.join(", ")}`
+      );
+      return;
+    }
+    activeProvider = requestedProvider;
+    await channel.send(msg.channelId, `Switched AI provider to: ${activeProvider}`);
     return;
   }
 
@@ -118,18 +142,20 @@ async function handleCommand(msg, channel) {
 }
 
 /**
- * Handle a message that should go to Claude
+ * Handle a message that should go to configured AI provider
  */
-async function handleClaudeMessage(msg, channel) {
+async function handleAIMessage(msg, channel) {
   const sessionKey = getSessionKey(msg);
+  const provider = activeProvider;
+  const providerSessionKey = getProviderSessionKey(provider, sessionKey);
 
   // Prevent concurrent requests per session
-  if (activeRequests.has(sessionKey)) {
+  if (activeRequests.has(providerSessionKey)) {
     await channel.send(msg.channelId, "Still processing your previous message. Please wait.");
     return;
   }
 
-  activeRequests.add(sessionKey);
+  activeRequests.add(providerSessionKey);
 
   // Start typing indicator
   await channel.sendTyping(msg.channelId);
@@ -138,12 +164,12 @@ async function handleClaudeMessage(msg, channel) {
   }, 4000);
 
   try {
-    const sessionId = sessions.get(sessionKey);
-    const result = await runClaude(msg.text, sessionId);
+    const sessionId = sessions.get(providerSessionKey);
+    const result = await runAI(msg.text, sessionId, provider);
 
     // Store session ID for conversation continuity
     if (result.session_id) {
-      sessions.set(sessionKey, result.session_id);
+      sessions.set(providerSessionKey, result.session_id);
     }
 
     // Extract the text response
@@ -160,7 +186,7 @@ async function handleClaudeMessage(msg, channel) {
     await channel.send(msg.channelId, `Error: ${err.message.slice(0, 500)}`);
   } finally {
     clearInterval(typingInterval);
-    activeRequests.delete(sessionKey);
+    activeRequests.delete(providerSessionKey);
   }
 }
 
@@ -181,7 +207,7 @@ async function start() {
   }
 
   // Load plugins
-  await loadPlugins({ channels, config, runClaude });
+  await loadPlugins({ channels, config, runClaude: (prompt, sessionId = null) => runAI(prompt, sessionId, activeProvider) });
 
   // Start all channels
   for (const [type, channel] of channels) {

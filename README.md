@@ -1,14 +1,14 @@
 # 🦪 Oyster Bot
 
-> Inspired by [OpenClaw](https://github.com/openclaw/openclaw) — but ultra-lightweight and very straightforward. No gateway, no daemon, no native apps. Just a simple bot that wraps [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) and sends responses to your messaging app.
+> Inspired by [OpenClaw](https://github.com/openclaw/openclaw) — but ultra-lightweight and very straightforward. No gateway, no daemon, no native apps. Just a simple bot that wraps AI CLIs (Claude Code or Codex) and sends responses to your messaging app.
 
 <img src="oyster.png" width="150" alt="Oyster">
 
-Chat with Claude, search the web, read files, and run commands—all from your phone.
+Chat with Claude or Codex, search the web, read files, and run commands-all from your phone.
 
 ## Features
 
-- **Conversational AI** — Chat with Claude through Telegram
+- **Conversational AI** — Chat through Telegram using Claude CLI or Codex CLI
 - **Session continuity** — Maintains conversation history per chat
 - **Streaming logs** — See Claude's thinking and tool usage in real-time
 - **Configurable tools** — Control which tools Claude can use
@@ -18,7 +18,7 @@ Chat with Claude, search the web, read files, and run commands—all from your p
 ## Prerequisites
 
 - Node.js 18+
-- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and authenticated
+- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) and/or Codex CLI installed and authenticated
 - A Telegram bot token (see below)
 
 ### Claude Code Authentication
@@ -89,6 +89,12 @@ Create a `.env` file with the following variables:
 | `HANDLER_TIMEOUT_MS` | `300000` | Telegraf handler timeout (5 min) |
 | `MAX_MESSAGE_LENGTH` | `4096` | Max chars before splitting messages |
 
+### Optional - AI Provider
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AI_PROVIDER` | `claude` | Active provider (`claude` or `codex`) |
+
 ### Optional - Claude CLI Settings
 
 | Variable | Default | Description |
@@ -101,6 +107,15 @@ Create a `.env` file with the following variables:
 | `CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS` | `false` | Skip all permission prompts (use with caution) |
 | `CLAUDE_VERBOSE_LOGGING` | `false` | Log all streaming event types |
 | `CLAUDE_ALLOWED_DIRECTORIES` | (none) | Additional directories Claude can access (beyond working dir) |
+
+### Optional - Codex CLI Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEX_PATH` | `codex` | Path to Codex CLI executable |
+| `CODEX_TIMEOUT_MS` | `180000` | Codex process timeout (3 min) |
+| `CODEX_MODEL` | (none) | Optional Codex model override |
+| `CODEX_EXTRA_PATH` | (see config.js) | Additional PATH for Codex subprocess |
 
 ### Optional - Plugin Settings
 
@@ -121,6 +136,9 @@ TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 
 # Restrict to your Telegram user ID
 ALLOWED_USER_IDS=123456789
+
+# Provider: claude or codex
+AI_PROVIDER=claude
 
 # Allow git and npm commands
 CLAUDE_ALLOWED_TOOLS=Read,Glob,Grep,WebSearch,WebFetch,Bash(git *),Bash(npm *)
@@ -218,6 +236,7 @@ The PM2 config includes crash loop protection:
 | `/start` | Show welcome message and help |
 | `/reset` | Clear conversation history |
 | `/session` | Show current session ID |
+| `/switch <claude\|codex>` | Switch active AI provider |
 
 ## Plugins
 
@@ -319,7 +338,7 @@ export default {
   - `msg.channelId` — Chat/room ID
 - `reply(text)` — Send a response to the same channel
 - `sendTyping()` — Show typing indicator
-- `claude(prompt)` — Run a prompt through Claude CLI
+- `claude(prompt)` — Run a prompt through the active AI provider (Claude or Codex)
 - `config` — App configuration object
 - `channels` — Map of channel instances (for scheduled tasks)
 
@@ -335,7 +354,9 @@ export default {
 oyster-bot/
 ├── src/
 │   ├── app.js            # Main entrypoint (channel-agnostic)
+│   ├── ai.js             # Provider router (Claude/Codex)
 │   ├── claude.js         # Claude CLI wrapper with streaming
+│   ├── codex.js          # Codex CLI wrapper
 │   ├── config.js         # Centralized configuration
 │   ├── plugin-loader.js  # Plugin discovery and registration
 │   ├── channels/         # Channel adapters
@@ -363,7 +384,7 @@ The bot uses a channel-agnostic design that makes it easy to add support for new
 ```
          ┌───────────────────────────────────┐
          │              app.js               │
-         │ (routing, sessions, Claude, etc.) │
+         │ (routing, sessions, provider, etc.) │
          └─────────────────┬─────────────────┘
                            │
                  ┌─────────┴─────────┐
@@ -389,8 +410,8 @@ The bot uses a channel-agnostic design that makes it easy to add support for new
 ## How It Works
 
 1. User sends a message to the Telegram bot
-2. Bot spawns the Claude CLI with `--print --output-format stream-json`
-3. Claude processes the request using allowed tools
+2. Bot picks the active provider (`claude` or `codex`)
+3. Bot spawns the matching CLI and sends your prompt
 4. Streaming events are logged in real-time (thinking, tool use, etc.)
 5. Final response is sent back to the user in Telegram
 
