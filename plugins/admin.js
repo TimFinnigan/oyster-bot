@@ -3,7 +3,7 @@
  *
  * Provides administrative commands for managing the bot:
  *   .reload  - Hot reload all plugins without restarting
- *   .stop    - Emergency stop (kills the process immediately)
+ *   .stop    - Stop the bot (via PM2 if available, otherwise exits)
  *   .restart - Full process restart (requires PM2)
  *   .status  - Show bot status and loaded plugins
  */
@@ -16,7 +16,7 @@ export default {
 
   help: {
     reload: "Hot reload all plugins",
-    stop: "Emergency stop the bot",
+    stop: "Stop the bot (stays stopped until .restart)",
     restart: "Full process restart via PM2",
     status: "Show bot status and uptime",
   },
@@ -43,9 +43,20 @@ export default {
     },
 
     async stop(msg, { reply }) {
-      await reply("Stopping bot...");
-      await destroyPlugins();
-      process.exit(0);
+      // pm_id is always set by PM2 for managed processes
+      if (process.env.pm_id !== undefined) {
+        await reply("Stopping bot via PM2 (use .restart to bring it back)...");
+        exec("pm2 stop oyster-bot", (error) => {
+          if (error) {
+            console.error("[admin] PM2 stop failed:", error.message);
+            destroyPlugins().then(() => process.exit(0));
+          }
+        });
+      } else {
+        await reply("Stopping bot...");
+        await destroyPlugins();
+        process.exit(0);
+      }
     },
 
     async restart(msg, { reply }) {
