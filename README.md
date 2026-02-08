@@ -128,6 +128,8 @@ Create a `.env` file with the following variables:
 | `QUOTES_CRON` | `0 * * * *` | Cron schedule for quotes (default: hourly) |
 | `WEATHER_DEFAULT_LOCATION` | (none) | Default location for weather (e.g., "Seattle, WA") |
 | `WEATHER_CRON` | `0 8 * * *` | Cron schedule for daily weather (default: 8am) |
+| `ORCHESTRATOR_CRON` | `0 9 * * *` | Cron schedule for orchestrator check-ins (default: 9am) |
+| `ORCHESTRATOR_ENABLED` | `true` | Enable/disable scheduled orchestrator check-ins |
 
 ### Example `.env`
 
@@ -290,6 +292,47 @@ Git workflow (commit, PR, merge from Telegram):
 - `.weather <location>` — Get weather for a specific place
 - Scheduled weather — Sends daily weather report
 
+**Orchestrator Plugin** (`plugins/orchestrator.js`)
+
+A self-organizing agent that helps you achieve goals through daily check-ins.
+
+Commands:
+- `.goal <text>` — Add a goal (e.g., `.goal Build an audience around AI content`)
+- `.goals` — List your active goals
+- `.rmgoal <n>` — Pause a goal by number
+- `.oidea <text>` — Add an idea for your primary goal
+- `.ideas` — View tracked ideas by status
+- `.checkin` — Trigger a check-in now (or wait for schedule)
+- `.approve` — Approve the pending proposal
+- `.reject [feedback]` — Reject with optional feedback
+- `.ostatus` — View orchestrator status
+
+Example workflow:
+```
+.goal Build an audience around AI content - I have a newsletter
+
+.checkin
+
+# Claude proposes actions:
+# 🎯 Daily Check-in
+# 1. Research successful AI newsletters
+# 2. Draft outline for "state of AI agents" post
+#
+# Reply .approve to proceed, or .reject [feedback]
+
+.approve
+
+# ✅ Approved! Here's today's focus:
+# 1. Research successful AI newsletters
+# 2. Draft outline for "state of AI agents" post
+```
+
+Configure in `.env`:
+```bash
+ORCHESTRATOR_CRON=0 9 * * *   # Daily at 9am (default)
+ORCHESTRATOR_ENABLED=true     # Enable scheduled check-ins
+```
+
 Configure in `.env`:
 ```bash
 # Optional runtime paths
@@ -306,7 +349,15 @@ QUOTES_CRON=0 9 * * *
 # Weather settings
 WEATHER_DEFAULT_LOCATION=Seattle, WA
 WEATHER_CRON=0 8 * * *
+
+# Orchestrator settings
+ORCHESTRATOR_CRON=0 9 * * *
+# ORCHESTRATOR_ENABLED=true
 ```
+
+### Local/Private Plugins
+
+For plugins you don't want to commit, put them in `plugins/local/` — it's gitignored and the plugin loader finds them automatically.
 
 ### Creating Your Own Plugin
 
@@ -382,6 +433,7 @@ oyster-bot/
 │   ├── admin.js          # Admin commands (reload, restart, status)
 │   ├── quotes.js         # Motivational quotes plugin
 │   ├── food-diary.js     # Food diary plugin
+│   ├── orchestrator.js   # Goal tracking and daily check-ins
 │   ├── reminder.js       # Reminders plugin
 │   └── weather.js        # Weather plugin
 ├── ecosystem.config.cjs  # PM2 process manager config
