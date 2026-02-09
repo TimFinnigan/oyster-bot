@@ -254,8 +254,23 @@ export class TelegramChannel extends BaseChannel {
       }
     });
 
-    await this.bot.launch({ dropPendingUpdates: true });
-    console.log(`[telegram] Channel started`);
+    const maxRetries = 5;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.bot.launch({ dropPendingUpdates: true });
+        console.log(`[telegram] Channel started`);
+        return;
+      } catch (err) {
+        const is409 = err?.response?.error_code === 409;
+        if (is409 && attempt < maxRetries) {
+          const delay = attempt * 5000;
+          console.warn(`[telegram] 409 conflict (attempt ${attempt}/${maxRetries}), retrying in ${delay / 1000}s...`);
+          await new Promise((r) => setTimeout(r, delay));
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
   async stop() {

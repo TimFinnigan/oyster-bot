@@ -17,6 +17,37 @@ import { execSync } from "child_process";
 const GIT_CWD = { cwd: process.cwd(), encoding: "utf8" };
 const MAX_DIFF_CHARS = 8000;
 
+let codexFallbackRunner = null;
+
+async function runPromptWithFallback(prompt, claudeFn, reply, context = "processing your request") {
+  try {
+    return await claudeFn(prompt);
+  } catch (error) {
+    const message = error?.message || "";
+    const shouldFailover = message.includes("Claude exited with code 1");
+
+    if (!shouldFailover) {
+      throw error;
+    }
+
+    console.warn(`[git] Claude crashed during ${context}: ${message}`);
+    if (reply) {
+      await reply(`Claude crashed while ${context}. Falling back to Codex...`);
+    }
+
+    try {
+      if (!codexFallbackRunner) {
+        const { runAI } = await import("../src/ai.js");
+        codexFallbackRunner = (prompt, sessionId = null) => runAI(prompt, sessionId, "codex");
+      }
+      return await codexFallbackRunner(prompt);
+    } catch (fallbackError) {
+      const fallbackMessage = fallbackError?.message || fallbackError?.toString() || "unknown Codex error";
+      throw new Error(`${message} (Codex fallback failed: ${fallbackMessage})`);
+    }
+  }
+}
+
 function deleteLocalBranchIfExists(branch) {
   try {
     execSync(`git show-ref --verify --quiet refs/heads/${branch}`, GIT_CWD);
@@ -82,8 +113,11 @@ export default {
 
         const branch = execSync("git branch --show-current", GIT_CWD).trim();
 
-        const result = await claude(
-          `Summarize these uncommitted git changes in a concise, readable way. Group by theme (e.g. new features, bug fixes, refactors). Use bullet points. Keep it short — this is for a quick Telegram status update.\n\nBranch: ${branch}\n\nFiles changed:\n${status}\n\nDiff:\n${diff}`
+        const result = await runPromptWithFallback(
+          `Summarize these uncommitted git changes in a concise, readable way. Group by theme (e.g. new features, bug fixes, refactors). Use bullet points. Keep it short — this is for a quick Telegram status update.\n\nBranch: ${branch}\n\nFiles changed:\n${status}\n\nDiff:\n${diff}`,
+          claude,
+          reply,
+          "summarizing git changes"
         );
 
         const summary = result.result?.trim() || "Could not generate summary.";
@@ -132,8 +166,8 @@ export default {
 
             try {
               const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps\n\nChanges:\n${diff}`;
-              const result = await claude(prompt);
-              name = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
+              const result = await runPromptWithFallback(prompt, claude, reply, "generating a branch name");
+              name = result.result?.trim().replace(/^["'\\`]+|["'\\`]+$/g, "").trim();
               name = name?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
             } catch (e) {
               console.error("[git] Failed to generate branch name:", e.message);
@@ -187,7 +221,7 @@ export default {
           const prompt = `Generate a concise git commit message (1 line, max 72 chars) for these changes. Follow conventional commits style (feat:, fix:, chore:, etc). Reply with ONLY the commit message, nothing else.\n\n${diff}`;
 
           try {
-            const result = await claude(prompt);
+            const result = await runPromptWithFallback(prompt, claude, reply, "generating a commit message");
             message = result.result?.trim() || "Update from Telegram";
             message = message.replace(/^["'`]+|["'`]+$/g, "").trim();
           } catch (e) {
@@ -264,7 +298,7 @@ BODY:
 
         let body = "";
         try {
-          const result = await claude(prompt);
+          const result = await runPromptWithFallback(prompt, claude, reply, "drafting the PR description");
           const response = result.result?.trim() || "";
 
           const titleMatch = response.match(/TITLE:\s*(.+)/);
@@ -377,8 +411,8 @@ BODY:
 
             try {
               const prompt = `Generate a short git branch name for these changes. Use format: type/short-description where type is feat, fix, chore, refactor, or docs. Keep the description to 2-4 words max, lowercase, hyphenated. Reply with ONLY the branch name, nothing else.\n\nExample good names: feat/add-user-auth, fix/login-redirect, chore/update-deps, docs/api-reference\n\nChanges:\n${diff}`;
-              const result = await claude(prompt);
-              branchName = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim();
+              const result = await runPromptWithFallback(prompt, claude, reply, "generating a branch name");
+              branchName = result.result?.trim().replace(/^["'\\`]+|["'\\`]+$/g, "").trim();
               branchName = branchName?.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 50);
             } catch (e) {
               console.error("[git] Failed to generate branch name:", e.message);
@@ -412,8 +446,8 @@ BODY:
           let commitMsg = "Update from Telegram";
           try {
             const prompt = `Generate a concise git commit message (1 line, max 72 chars) for these changes. Follow conventional commits style (feat:, fix:, chore:, etc). Reply with ONLY the commit message, nothing else.\n\n${diff}`;
-            const result = await claude(prompt);
-            commitMsg = result.result?.trim().replace(/^["'\`]+|["'\`]+$/g, "").trim() || commitMsg;
+            const result = await runPromptWithFallback(prompt, claude, reply, "generating a commit message");
+            commitMsg = result.result?.trim().replace(/^["'\\`]+|["'\\`]+$/g, "").trim() || commitMsg;
           } catch (e) {
             console.error("[git] Failed to generate commit message:", e.message);
           }
@@ -472,7 +506,7 @@ BODY:
 - Key changes (bullet points)
 - Any notes for reviewers>`;
 
-            const result = await claude(prompt);
+            const result = await runPromptWithFallback(prompt, claude, reply, "drafting the PR description");
             const response = result.result?.trim() || "";
 
             const titleMatch = response.match(/TITLE:\s*(.+)/);
