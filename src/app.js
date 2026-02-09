@@ -146,16 +146,40 @@ async function handleCommand(msg, channel) {
  */
 async function handleAIMessage(msg, channel) {
   const sessionKey = getSessionKey(msg);
-  const provider = activeProvider;
-  const providerSessionKey = getProviderSessionKey(provider, sessionKey);
+  let provider = activeProvider;
 
-  // Prevent concurrent requests per session
-  if (activeRequests.has(providerSessionKey)) {
-    await channel.send(msg.channelId, "Still processing your previous message. Please wait.");
-    return;
-  }
+  const attemptWithProvider = async (providerName, { notifyBusy = true } = {}) => {
+    const targetSessionKey = getProviderSessionKey(providerName, sessionKey);
+    if (activeRequests.has(targetSessionKey)) {
+      if (notifyBusy) {
+        await channel.send(msg.channelId, "Still processing your previous message. Please wait.");
+      }
+      return false;
+    }
 
-  activeRequests.add(providerSessionKey);
+    activeRequests.add(targetSessionKey);
+
+    try {
+      const sessionId = sessions.get(targetSessionKey);
+      const result = await runAI(msg.text, sessionId, providerName);
+
+      if (result.session_id) {
+        sessions.set(targetSessionKey, result.session_id);
+      }
+
+      const responseText =
+        result.result || result.content || JSON.stringify(result, null, 2);
+
+      const chunks = splitMessage(responseText);
+      for (const chunk of chunks) {
+        await channel.send(msg.channelId, chunk);
+      }
+
+      return true;
+    } finally {
+      activeRequests.delete(targetSessionKey);
+    }
+  };
 
   // Start typing indicator
   await channel.sendTyping(msg.channelId);
@@ -164,29 +188,47 @@ async function handleAIMessage(msg, channel) {
   }, 4000);
 
   try {
-    const sessionId = sessions.get(providerSessionKey);
-    const result = await runAI(msg.text, sessionId, provider);
-
-    // Store session ID for conversation continuity
-    if (result.session_id) {
-      sessions.set(providerSessionKey, result.session_id);
-    }
-
-    // Extract the text response
-    const responseText =
-      result.result || result.content || JSON.stringify(result, null, 2);
-
-    // Send response (split if needed)
-    const chunks = splitMessage(responseText);
-    for (const chunk of chunks) {
-      await channel.send(msg.channelId, chunk);
+    const handled = await attemptWithProvider(provider);
+    if (!handled) {
+      return;
     }
   } catch (err) {
-    console.error("[app] Error:", err.message);
-    await channel.send(msg.channelId, `Error: ${err.message.slice(0, 500)}`);
+    const errorMessage = err?.message || "Unknown error";
+    console.error("[app] Error:", errorMessage);
+
+    const shouldFailover =
+      provider === "claude" && errorMessage.includes("Claude exited with code 1");
+
+    if (shouldFailover) {
+      sessions.delete(getProviderSessionKey("claude", sessionKey));
+      activeProvider = "codex";
+      provider = "codex";
+      console.warn("[app] Claude failed with exit code 1. Switching to codex and retrying...");
+      await channel.send(
+        msg.channelId,
+        "Claude crashed (exit code 1). Switching to codex and retrying your request..."
+      );
+
+      try {
+        const fallbackHandled = await attemptWithProvider("codex");
+        if (!fallbackHandled) {
+          return;
+        }
+        return;
+      } catch (fallbackErr) {
+        const fallbackMessage = fallbackErr?.message || "Unknown fallback error";
+        console.error("[app] Codex fallback error:", fallbackMessage);
+        await channel.send(
+          msg.channelId,
+          `Fallback to codex also failed: ${fallbackMessage.slice(0, 500)}`
+        );
+        return;
+      }
+    }
+
+    await channel.send(msg.channelId, `Error: ${errorMessage.slice(0, 500)}`);
   } finally {
     clearInterval(typingInterval);
-    activeRequests.delete(providerSessionKey);
   }
 }
 
