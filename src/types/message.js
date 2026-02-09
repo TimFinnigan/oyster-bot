@@ -28,6 +28,7 @@ export function createMessage({
   userName,
   text,
   location = null,
+  attachments = [],
   replyToId = null,
   raw = null,
 }) {
@@ -39,6 +40,7 @@ export function createMessage({
     userName,
     text,
     location,
+    attachments,
     replyToId,
     raw,
     timestamp: Date.now(),
@@ -64,6 +66,7 @@ export function getSessionKey(msg) {
  * @property {string} userName
  * @property {string} text
  * @property {Object|null} location - { latitude: number, longitude: number }
+ * @property {Array<Object>} attachments - Normalized attachment metadata (id, type, subtype, mimeType, filePath, size, metadata)
  * @property {string|null} replyToId
  * @property {Object|null} raw
  * @property {number} timestamp

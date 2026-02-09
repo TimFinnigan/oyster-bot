@@ -89,6 +89,14 @@ Create a `.env` file with the following variables:
 | `HANDLER_TIMEOUT_MS` | `300000` | Telegraf handler timeout (5 min) |
 | `MAX_MESSAGE_LENGTH` | `4096` | Max chars before splitting messages |
 
+### Optional - Telegram Media
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TELEGRAM_MEDIA_DIR` | `./data/telegram-media` | Directory where incoming Telegram files (photos/documents) are saved so Claude/Codex can read them |
+| `TELEGRAM_MEDIA_MAX_MB` | `15` | Maximum allowed attachment size in megabytes (also configurable via `TELEGRAM_MEDIA_MAX_BYTES`) |
+| `TELEGRAM_MEDIA_MAX_BYTES` | Derived from `TELEGRAM_MEDIA_MAX_MB` | Explicit byte ceiling for attachments; overrides the MB setting |
+
 ### Optional - AI Provider
 
 | Variable | Default | Description |
@@ -198,6 +206,15 @@ Bash(* --help)
 ```
 
 ## Usage
+
+### Sending Images from Telegram
+
+1. (Optional) Set `TELEGRAM_MEDIA_DIR` in `.env` if you want downloaded files to live somewhere other than `./data/telegram-media`.  
+2. Send a photo (or an image document) to your Telegram bot. Add a caption if you want the text included with the request.  
+3. Oyster bot downloads the file, stores it locally, and appends a short summary to your prompt that lists the absolute path (so Claude/Codex can `Read` it).  
+4. In your follow-up instructions you can reference the provided path directly, e.g. “Please describe the screenshot saved at `/Users/me/oyster/data/telegram-media/2025-02-09-...jpg`.”  
+
+Files larger than the configured limit (default 15 MB) are rejected and you’ll get a friendly reminder in Telegram.
 
 ### Development
 

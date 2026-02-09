@@ -1,10 +1,40 @@
 import { config as loadEnv } from "dotenv";
-import { dirname, join } from "path";
+import { homedir } from "os";
+import { dirname, join, resolve, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { getDataDir, getPluginDirs } from "./runtime-paths.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: join(__dirname, "..", ".env") });
+const dataDir = getDataDir();
+
+function resolveMediaDirOverride(value) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return isAbsolute(trimmed) ? trimmed : resolve(__dirname, "..", trimmed);
+}
+
+function resolveTelegramMediaDir() {
+  return resolveMediaDirOverride(process.env.TELEGRAM_MEDIA_DIR) || join(dataDir, "telegram-media");
+}
+
+function resolveTelegramMediaMaxBytes() {
+  const bytesEnv = Number(process.env.TELEGRAM_MEDIA_MAX_BYTES);
+  if (!Number.isNaN(bytesEnv) && bytesEnv > 0) {
+    return bytesEnv;
+  }
+  const mb = Number(process.env.TELEGRAM_MEDIA_MAX_MB);
+  const fallbackMb = !Number.isNaN(mb) && mb > 0 ? mb : 15;
+  return Math.round(fallbackMb * 1024 * 1024);
+}
+
+const telegramMediaDir = resolveTelegramMediaDir();
+const telegramMediaMaxBytes = resolveTelegramMediaMaxBytes();
 
 /**
  * Parse allowed user IDs from env (supports numbers for Telegram, strings for others)
@@ -28,6 +58,8 @@ export const config = {
       botToken: process.env.TELEGRAM_BOT_TOKEN,
       handlerTimeout: Number(process.env.HANDLER_TIMEOUT_MS) || 300_000, // 5 minutes
       maxMessageLength: Number(process.env.MAX_MESSAGE_LENGTH) || 4096,
+      mediaDir: telegramMediaDir,
+      maxAttachmentBytes: telegramMediaMaxBytes,
       // Per-channel auth (uses numeric IDs for Telegram)
       allowedUserIds: process.env.ALLOWED_USER_IDS
         ? process.env.ALLOWED_USER_IDS.split(",").map((id) => Number(id.trim()))
@@ -45,6 +77,13 @@ export const config = {
     //   appToken: process.env.SLACK_APP_TOKEN,
     //   allowedUserIds: parseAllowedUserIds(process.env.SLACK_ALLOWED_USER_IDS),
     // },
+  },
+
+  media: {
+    telegram: {
+      dir: telegramMediaDir,
+      maxAttachmentBytes: telegramMediaMaxBytes,
+    },
   },
 
   // Global settings
