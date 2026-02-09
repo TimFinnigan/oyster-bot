@@ -1,6 +1,24 @@
 import { spawn } from "child_process";
 import config from "./config.js";
 
+function extractSessionIdFromEvent(event) {
+  if (!event || typeof event !== "object") return null;
+  const candidates = [
+    event.session_id,
+    event.sessionId,
+    event.session?.id,
+    event.result?.session_id,
+    event.result?.sessionId,
+    event.result?.session?.id,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
 /**
  * Log a streaming event from Claude
  */
@@ -80,14 +98,29 @@ export function runClaude(prompt, sessionId = null) {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let buffer = "";
-    let stderr = "";
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    let stderrRaw = "";
     let finalResult = null;
+    let parsedSessionId = sessionId || null;
     let webSearchTimer = null;
+    let settled = false;
+
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
 
     const timeout = setTimeout(() => {
       proc.kill("SIGTERM");
-      reject(new Error(`Claude timed out after ${config.claude.timeoutMs / 1000}s`));
+      finishReject(new Error(`Claude timed out after ${config.claude.timeoutMs / 1000}s`));
     }, config.claude.timeoutMs);
 
     function clearWebSearchTimer() {
@@ -97,60 +130,80 @@ export function runClaude(prompt, sessionId = null) {
       }
     }
 
-    proc.stdout.on("data", (chunk) => {
-      buffer += chunk.toString();
+    function handleEvent(event) {
+      logStreamEvent(event);
+      const sessionFromEvent = extractSessionIdFromEvent(event);
+      if (sessionFromEvent && sessionFromEvent !== parsedSessionId) {
+        parsedSessionId = sessionFromEvent;
+      }
 
-      // Process complete JSON lines
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+      // Web search timeout: abandon if a web search tool takes too long
+      // Claude CLI stream-json sends: assistant (with tool_use) -> user (tool result) -> assistant (response)
+      if (config.claude.webSearchTimeoutMs) {
+        if (event.type === "assistant" && event.message?.content) {
+          // Check if this assistant message contains a WebSearch/WebFetch tool use
+          const hasWebTool = event.message.content.some(
+            (block) =>
+              block.type === "tool_use" &&
+              ["WebSearch", "WebFetch"].includes(block.name)
+          );
+
+          if (hasWebTool) {
+            // Starting a web search/fetch - set the timeout
+            clearWebSearchTimer();
+            webSearchTimer = setTimeout(() => {
+              console.log(`[claude] web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s, killing process`);
+              proc.kill("SIGTERM");
+              finishReject(new Error(`Web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s`));
+            }, config.claude.webSearchTimeoutMs);
+          }
+        }
+        // Clear timer when tool result comes back (user event) or final result
+        if (event.type === "user" || event.type === "result") {
+          clearWebSearchTimer();
+        }
+      }
+
+      // Capture the final result
+      if (event.type === "result") {
+        finalResult = event;
+      }
+    }
+
+    function consumeJsonLines(text, isStderr = false) {
+      if (isStderr) {
+        stderrBuffer += text;
+      } else {
+        stdoutBuffer += text;
+      }
+
+      const lines = (isStderr ? stderrBuffer : stdoutBuffer).split("\n");
+      const remainder = lines.pop() || "";
+      if (isStderr) {
+        stderrBuffer = remainder;
+      } else {
+        stdoutBuffer = remainder;
+      }
 
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const event = JSON.parse(line);
-          logStreamEvent(event);
-
-          // Web search timeout: abandon if a web search tool takes too long
-          // Claude CLI stream-json sends: assistant (with tool_use) -> user (tool result) -> assistant (response)
-          if (config.claude.webSearchTimeoutMs) {
-            if (event.type === "assistant" && event.message?.content) {
-              // Check if this assistant message contains a WebSearch/WebFetch tool use
-              const hasWebTool = event.message.content.some(
-                (block) =>
-                  block.type === "tool_use" &&
-                  ["WebSearch", "WebFetch"].includes(block.name)
-              );
-
-              if (hasWebTool) {
-                // Starting a web search/fetch - set the timeout
-                clearWebSearchTimer();
-                webSearchTimer = setTimeout(() => {
-                  console.log(`[claude] web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s, killing process`);
-                  proc.kill("SIGTERM");
-                  reject(new Error(`Web search timed out after ${config.claude.webSearchTimeoutMs / 1000}s`));
-                }, config.claude.webSearchTimeoutMs);
-              }
-            }
-            // Clear timer when tool result comes back (user event) or final result
-            if (event.type === "user" || event.type === "result") {
-              clearWebSearchTimer();
-            }
-          }
-
-          // Capture the final result
-          if (event.type === "result") {
-            finalResult = event;
-          }
+          handleEvent(JSON.parse(line));
         } catch {
           // Not valid JSON, skip
         }
       }
+    }
+
+    proc.stdout.on("data", (chunk) => {
+      consumeJsonLines(chunk.toString(), false);
     });
 
     proc.stderr.on("data", (chunk) => {
       const text = chunk.toString();
-      stderr += text;
+      stderrRaw += text;
       if (text.trim()) console.log(`[claude stderr] ${text.trim()}`);
+      consumeJsonLines(text, true);
     });
 
     proc.on("close", (code) => {
@@ -159,31 +212,23 @@ export function runClaude(prompt, sessionId = null) {
       console.log(`[claude] exited with code ${code}`);
 
       if (code !== 0) {
-        reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
+        finishReject(new Error(`Claude exited with code ${code}: ${stderrRaw.slice(0, 500)}`));
         return;
       }
 
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer);
-          if (event.type === "result") {
-            finalResult = event;
-          }
-        } catch {
-          // ignore
-        }
-      }
+      // Process any remaining partial buffers
+      consumeJsonLines("\n", false);
+      consumeJsonLines("\n", true);
 
       if (finalResult) {
-        resolve({
+        finishResolve({
           result: finalResult.result,
-          session_id: finalResult.session_id,
+          session_id: extractSessionIdFromEvent(finalResult) || parsedSessionId,
           cost_usd: finalResult.cost_usd,
           duration_ms: finalResult.duration_ms,
         });
       } else {
-        resolve({ result: "No response received", session_id: sessionId });
+        finishResolve({ result: "No response received", session_id: parsedSessionId });
       }
     });
 
@@ -191,7 +236,7 @@ export function runClaude(prompt, sessionId = null) {
       clearTimeout(timeout);
       clearWebSearchTimer();
       console.error(`[claude] spawn error:`, err.message);
-      reject(err);
+      finishReject(err);
     });
   });
 }
