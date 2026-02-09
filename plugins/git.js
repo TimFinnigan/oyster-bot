@@ -17,6 +17,20 @@ import { execSync } from "child_process";
 const GIT_CWD = { cwd: process.cwd(), encoding: "utf8" };
 const MAX_DIFF_CHARS = 8000;
 
+function deleteLocalBranchIfExists(branch) {
+  try {
+    execSync(`git show-ref --verify --quiet refs/heads/${branch}`, GIT_CWD);
+  } catch {
+    return;
+  }
+
+  try {
+    execSync(`git branch -d ${branch}`, GIT_CWD);
+  } catch {
+    execSync(`git branch -D ${branch}`, GIT_CWD);
+  }
+}
+
 function parseArgs(msg) {
   const parts = (msg.text || "").trim().split(/\s+/);
   return parts.slice(1);
@@ -322,11 +336,7 @@ BODY:
         execSync(`git checkout ${baseBranch}`, GIT_CWD);
         execSync("git pull", GIT_CWD);
 
-        try {
-          execSync(`git branch -d ${currentBranch}`, GIT_CWD);
-        } catch {
-          execSync(`git branch -D ${currentBranch}`, GIT_CWD);
-        }
+        deleteLocalBranchIfExists(currentBranch);
 
         await reply(`Merged and deleted branch: ${currentBranch}\nNow on: ${baseBranch}`);
       } catch (e) {
@@ -496,15 +506,7 @@ BODY:
         execSync(`git checkout ${baseBranch}`, GIT_CWD);
         execSync("git pull", GIT_CWD);
 
-        try {
-          execSync(`git branch -d ${currentBranch}`, GIT_CWD);
-        } catch {
-          try {
-            execSync(`git branch -D ${currentBranch}`, GIT_CWD);
-          } catch {
-            // Branch already deleted
-          }
-        }
+        deleteLocalBranchIfExists(currentBranch);
 
         await reply(`🎉 Shipped! Merged ${currentBranch} → ${baseBranch}`);
       } catch (e) {

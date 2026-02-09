@@ -10,9 +10,34 @@ import { runAI, getConfiguredProvider, normalizeProvider, SUPPORTED_AI_PROVIDERS
 import { createChannels } from "./channels/index.js";
 import { loadPlugins, handlePluginMessage, destroyPlugins } from "./plugin-loader.js";
 import { getSessionKey } from "./types/message.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 
 // Per-session tracking: provider:sessionKey -> sessionId
-const sessions = new Map();
+const SESSIONS_FILE = join(config.paths.dataDir, "chat-sessions.json");
+
+function loadPersistedSessions() {
+  try {
+    if (!existsSync(SESSIONS_FILE)) return new Map();
+    const data = JSON.parse(readFileSync(SESSIONS_FILE, "utf8"));
+    if (!data || typeof data !== "object") return new Map();
+    return new Map(Object.entries(data).filter(([, value]) => typeof value === "string" && value.length > 0));
+  } catch (err) {
+    console.error("[app] Failed to load persisted sessions:", err.message);
+    return new Map();
+  }
+}
+
+function persistSessions() {
+  try {
+    mkdirSync(config.paths.dataDir, { recursive: true });
+    writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2));
+  } catch (err) {
+    console.error("[app] Failed to persist sessions:", err.message);
+  }
+}
+
+const sessions = loadPersistedSessions();
 // Track active requests to prevent concurrent calls per session
 const activeRequests = new Set();
 // Runtime provider can be switched via /switch
@@ -110,6 +135,7 @@ async function handleCommand(msg, channel) {
 
   if (text === "/reset") {
     sessions.delete(providerSessionKey);
+    persistSessions();
     await channel.send(msg.channelId, `Conversation reset for provider: ${activeProvider}`);
     return;
   }
@@ -163,8 +189,10 @@ async function handleAIMessage(msg, channel) {
       const sessionId = sessions.get(targetSessionKey);
       const result = await runAI(msg.text, sessionId, providerName);
 
-      if (result.session_id) {
-        sessions.set(targetSessionKey, result.session_id);
+      const returnedSessionId = result.session_id || result.sessionId || null;
+      if (returnedSessionId) {
+        sessions.set(targetSessionKey, returnedSessionId);
+        persistSessions();
       }
 
       const responseText =
@@ -201,6 +229,7 @@ async function handleAIMessage(msg, channel) {
 
     if (shouldFailover) {
       sessions.delete(getProviderSessionKey("claude", sessionKey));
+      persistSessions();
       activeProvider = "codex";
       provider = "codex";
       console.warn("[app] Claude failed with exit code 1. Switching to codex and retrying...");
