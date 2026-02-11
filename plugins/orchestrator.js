@@ -328,6 +328,81 @@ async function runCheckIn(userId, channelType, channelId) {
   }
 }
 
+function buildExecutionPrompt(action, goal) {
+  return `You are an autonomous agent executing a task for the user.
+
+## Goal
+${goal.text}${goal.context ? ` (Context: ${goal.context})` : ""}
+
+## Task
+${action.description}
+
+## Why
+${action.why}
+
+## Instructions
+- Actually DO the work, don't just describe what you would do.
+- Use WebSearch and WebFetch to research real information.
+- Produce a concrete deliverable: research findings, drafted content, analysis, etc.
+- Be thorough but concise in your output.
+- Format your output as something the user can immediately use or act on.
+- If the task requires creating content (e.g., social media posts, product descriptions), write the actual content.
+- If the task requires research, provide specific findings with sources.`;
+}
+
+async function executeActions(actions, goal, userId, channelType, channelId) {
+  const channel = _channels?.get(channelType);
+  if (!channel || !_runClaude) {
+    console.error("[orchestrator] Cannot execute: missing channel or Claude");
+    return;
+  }
+
+  const results = [];
+
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    const label = action.description.length > 80
+      ? action.description.slice(0, 77) + "..."
+      : action.description;
+
+    await channel.send(channelId, `⚡ Working on action ${i + 1}/${actions.length}: ${label}`);
+
+    try {
+      const prompt = buildExecutionPrompt(action, goal);
+      const response = await _runClaude(prompt);
+      const result = response.result || "No output produced.";
+
+      // Truncate for Telegram (keep under 4000 chars to leave room for formatting)
+      const truncated = result.length > 3500
+        ? result.slice(0, 3500) + "\n\n... (truncated)"
+        : result;
+
+      await channel.send(channelId, `✅ Action ${i + 1} complete:\n\n${truncated}`);
+      results.push({ index: i, description: action.description, result, executedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error(`[orchestrator] Execution error for action ${i + 1}:`, err.message);
+      await channel.send(channelId, `❌ Action ${i + 1} failed: ${err.message.slice(0, 200)}`);
+      results.push({ index: i, description: action.description, error: err.message, executedAt: new Date().toISOString() });
+    }
+  }
+
+  // Save results to history
+  const history = loadHistory();
+  for (const r of results) {
+    const entry = history.find(
+      h => h.userId === userId && h.action === r.description && h.status === "approved" && !h.executedAt
+    );
+    if (entry) {
+      entry.result = r.error ? `Error: ${r.error}` : r.result;
+      entry.executedAt = r.executedAt;
+    }
+  }
+  saveHistory(history);
+
+  const succeeded = results.filter(r => !r.error).length;
+  await channel.send(channelId, `🏁 Done! ${succeeded}/${actions.length} actions completed.`);
+}
+
 async function runScheduledCheckIn() {
   console.log("[orchestrator] Running scheduled check-in");
 
@@ -373,6 +448,7 @@ export default {
     reject: "Reject proposal with optional feedback",
     checkin: "Trigger manual check-in now",
     ostatus: "Show orchestrator state and next scheduled run",
+    results: "View today's execution results",
   },
 
   commands: {
@@ -602,7 +678,15 @@ export default {
       }
 
       const actionList = proposal.actions.map((a, i) => `${i + 1}. ${a.description}`).join("\n");
-      await reply(`✅ Approved! Here's today's focus:\n\n${actionList}\n\nGood luck! Update me on progress anytime.`);
+      await reply(`✅ Approved! Here's today's focus:\n\n${actionList}\n\n🚀 Executing now...`);
+
+      // Get the user's primary goal for context (reuse goals from above)
+      const primaryGoal = goals[0] || { text: "No goal set", context: "" };
+
+      // Execute actions (don't await — let it run in background so the user isn't blocked)
+      executeActions(proposal.actions, primaryGoal, msg.userId, msg.channelType, msg.channelId).catch(err => {
+        console.error("[orchestrator] executeActions failed:", err.message);
+      });
     },
 
     reject: async (msg, { reply }) => {
@@ -693,6 +777,32 @@ export default {
       }
 
       await reply(lines.join("\n"));
+    },
+
+    results: async (msg, { reply }) => {
+      const history = loadHistory();
+      const today = new Date().toISOString().slice(0, 10);
+      const todayResults = history.filter(
+        h => h.userId === msg.userId && h.executedAt && h.executedAt.startsWith(today)
+      );
+
+      if (todayResults.length === 0) {
+        await reply("No execution results for today. Approve a proposal with `.approve` to get started.");
+        return;
+      }
+
+      for (const [i, entry] of todayResults.entries()) {
+        const label = entry.action.length > 60
+          ? entry.action.slice(0, 57) + "..."
+          : entry.action;
+        const status = entry.result?.startsWith("Error:") ? "❌" : "✅";
+        const result = entry.result || "No output";
+        const truncated = result.length > 3500
+          ? result.slice(0, 3500) + "\n\n... (truncated)"
+          : result;
+
+        await reply(`${status} Result ${i + 1}: ${label}\n\n${truncated}`);
+      }
     },
   },
 
