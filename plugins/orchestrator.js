@@ -115,7 +115,7 @@ function formatDate(isoString) {
 // Orchestrator Loop
 // ============================================================================
 
-function buildClaudePrompt(goals, ideas, recentHistory) {
+function buildClaudePrompt(goals, ideas, recentHistory, pastIdeas = []) {
   const goalsText = goals.length > 0
     ? goals.map((g, i) => `${i + 1}. ${g.text}${g.context ? ` (Context: ${g.context})` : ""}`).join("\n")
     : "No active goals set.";
@@ -159,9 +159,13 @@ ${ideasText}
 ## Recent Activity
 ${recentText}
 
+## Past Ideas (already suggested — do NOT repeat these)
+${pastIdeas.length > 0 ? pastIdeas.map(i => `- [${i.status}] ${i.text}`).join("\n") : "None yet."}
+
 Based on this context, propose 1-3 concrete actions for today.
 For each action, explain briefly why it moves toward the goal.
 You may also suggest new ideas that could help achieve the goals.
+Do NOT repeat any ideas listed in "Current Ideas" or "Past Ideas" above — only suggest genuinely new ones.
 
 IMPORTANT: Respond ONLY with valid JSON in this exact format, no other text:
 {
@@ -254,12 +258,16 @@ async function runCheckIn(userId, channelType, channelId) {
     userGoals.some(g => g.id === i.goalId) &&
     ["new", "exploring", "in_progress"].includes(i.status)
   );
+  const pastIdeas = allIdeas.filter(i =>
+    userGoals.some(g => g.id === i.goalId) &&
+    ["completed", "rejected"].includes(i.status)
+  );
 
   const history = loadHistory();
   const recentHistory = history.filter(h => h.userId === userId).slice(-10);
 
   // Build prompt and call Claude
-  const prompt = buildClaudePrompt(userGoals, userIdeas, recentHistory);
+  const prompt = buildClaudePrompt(userGoals, userIdeas, recentHistory, pastIdeas);
 
   console.log("[orchestrator] Running check-in for user:", userId);
 
@@ -347,7 +355,8 @@ ${action.why}
 - Be thorough but concise in your output.
 - Format your output as something the user can immediately use or act on.
 - If the task requires creating content (e.g., social media posts, product descriptions), write the actual content.
-- If the task requires research, provide specific findings with sources.`;
+- If the task requires research, provide specific findings with sources.
+- IMPORTANT: If you need to create any files, save them under ${DATA_DIR} — never write files outside that directory.`;
 }
 
 async function executeActions(actions, goal, userId, channelType, channelId) {
@@ -399,8 +408,27 @@ async function executeActions(actions, goal, userId, channelType, channelId) {
   }
   saveHistory(history);
 
+  // Export full results to markdown in data dir
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const mdLines = [`# Orchestrator Results — ${dateStr}\n`, `**Goal:** ${goal.text}\n`, "---\n"];
+  for (const r of results) {
+    const status = r.error ? "FAILED" : "COMPLETED";
+    mdLines.push(`## Action ${r.index + 1}: ${r.description}\n`);
+    mdLines.push(`**Status:** ${status}  `);
+    mdLines.push(`**Executed:** ${new Date(r.executedAt).toLocaleTimeString()}\n`);
+    mdLines.push(r.error ? `**Error:** ${r.error}\n` : `${r.result}\n`);
+    mdLines.push("---\n");
+  }
+  const mdPath = join(DATA_DIR, `orchestrator-results-${dateStr}.md`);
+  try {
+    writeFileSync(mdPath, mdLines.join("\n"));
+    console.log(`[orchestrator] Results saved to ${mdPath}`);
+  } catch (err) {
+    console.error("[orchestrator] Failed to save results md:", err.message);
+  }
+
   const succeeded = results.filter(r => !r.error).length;
-  await channel.send(channelId, `🏁 Done! ${succeeded}/${actions.length} actions completed.`);
+  await channel.send(channelId, `🏁 Done! ${succeeded}/${actions.length} actions completed. Full results saved to data/orchestrator-results-${dateStr}.md`);
 }
 
 async function runScheduledCheckIn() {
