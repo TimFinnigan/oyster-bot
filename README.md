@@ -320,6 +320,7 @@ Commands:
 - `.oidea <text>` — Add an idea for your primary goal
 - `.ideas` — View tracked ideas by status
 - `.checkin` — Trigger a check-in now (or wait for schedule)
+- `.ocook [n]` — Auto-run `n` check-ins (default 1) and auto-approve them
 - `.approve` — Approve the pending proposal
 - `.reject [feedback]` — Reject with optional feedback
 - `.ostatus` — View orchestrator status

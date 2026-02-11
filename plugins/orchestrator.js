@@ -14,6 +14,7 @@
  * - .approve — Approve pending proposal
  * - .reject [reason] — Reject proposal with optional feedback
  * - .checkin — Trigger manual check-in (don't wait for schedule)
+ * - .ocook [n] — Auto-run n check-ins and auto-approve (default 1)
  * - .ostatus — Show orchestrator state and next scheduled run
  */
 
@@ -179,6 +180,109 @@ IMPORTANT: Respond ONLY with valid JSON in this exact format, no other text:
 }`;
 }
 
+async function generateProposalData(userId) {
+  if (!_runClaude) {
+    return { error: { code: "NO_MODEL", message: "AI provider is not ready yet. Please try again in a few seconds." } };
+  }
+
+  const allGoals = loadGoals();
+  const userGoals = allGoals.filter(g => g.userId === userId && g.status === "active");
+
+  if (userGoals.length === 0) {
+    return { error: { code: "NO_GOALS", message: "No active goals set. Use `.goal <text>` to add one!" } };
+  }
+
+  const allIdeas = loadIdeas();
+  const userIdeas = allIdeas.filter(i =>
+    userGoals.some(g => g.id === i.goalId) &&
+    ["new", "exploring", "in_progress"].includes(i.status)
+  );
+  const pastIdeas = allIdeas.filter(i =>
+    userGoals.some(g => g.id === i.goalId) &&
+    ["completed", "rejected"].includes(i.status)
+  );
+
+  const history = loadHistory();
+  const recentHistory = history.filter(h => h.userId === userId).slice(-10);
+
+  const prompt = buildClaudePrompt(userGoals, userIdeas, recentHistory, pastIdeas);
+
+  try {
+    const response = await _runClaude(prompt);
+    const proposal = parseClaudeResponse(response.result);
+
+    if (!proposal) {
+      return { error: { code: "PARSE_FAILED", message: "I had trouble generating a proposal. Please try `.checkin` again." } };
+    }
+
+    if (proposal.newIdeas && proposal.newIdeas.length > 0) {
+      const ideas = loadIdeas();
+      const primaryGoalId = userGoals[0].id;
+
+      for (const newIdea of proposal.newIdeas) {
+        ideas.push({
+          id: generateId(),
+          goalId: primaryGoalId,
+          text: newIdea.text,
+          status: "new",
+          reasoning: newIdea.reasoning || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      saveIdeas(ideas);
+    }
+
+    return { proposal, userGoals };
+  } catch (err) {
+    console.error("[orchestrator] Proposal generation error:", err.message);
+    return { error: { code: "AI_ERROR", message: `Claude error: ${err.message.slice(0, 200)}` } };
+  }
+}
+
+function applyProposalEffects(userId, proposal, userGoalsOverride = null) {
+  const timestamp = new Date().toISOString();
+  const history = loadHistory();
+
+  if (Array.isArray(proposal.actions) && proposal.actions.length > 0) {
+    for (const action of proposal.actions) {
+      history.push({
+        userId,
+        action: action.description,
+        why: action.why,
+        status: "approved",
+        approvedAt: timestamp,
+        proposedAt: proposal.createdAt || timestamp,
+      });
+    }
+    saveHistory(history);
+  }
+
+  const goals = (userGoalsOverride && userGoalsOverride.length)
+    ? userGoalsOverride
+    : loadGoals().filter(g => g.userId === userId && g.status === "active");
+  const goalIds = new Set(goals.map(g => g.id));
+
+  if (goalIds.size > 0) {
+    const ideas = loadIdeas();
+    let mutated = false;
+
+    for (const idea of ideas) {
+      if (goalIds.has(idea.goalId) && idea.status === "new") {
+        idea.status = "exploring";
+        idea.updatedAt = timestamp;
+        mutated = true;
+      }
+    }
+
+    if (mutated) {
+      saveIdeas(ideas);
+    }
+  }
+
+  return { primaryGoal: goals[0] || { text: "No goal set", context: "" } };
+}
+
 function parseClaudeResponse(responseText) {
   try {
     // Try to extract JSON from the response
@@ -244,96 +348,47 @@ async function runCheckIn(userId, channelType, channelId) {
     return null;
   }
 
-  // Load data for this user
-  const allGoals = loadGoals();
-  const userGoals = allGoals.filter(g => g.userId === userId && g.status === "active");
-
-  if (userGoals.length === 0) {
-    await channel.send(channelId, "No active goals set. Use `.goal <text>` to add one!");
-    return null;
-  }
-
-  const allIdeas = loadIdeas();
-  const userIdeas = allIdeas.filter(i =>
-    userGoals.some(g => g.id === i.goalId) &&
-    ["new", "exploring", "in_progress"].includes(i.status)
-  );
-  const pastIdeas = allIdeas.filter(i =>
-    userGoals.some(g => g.id === i.goalId) &&
-    ["completed", "rejected"].includes(i.status)
-  );
-
-  const history = loadHistory();
-  const recentHistory = history.filter(h => h.userId === userId).slice(-10);
-
-  // Build prompt and call Claude
-  const prompt = buildClaudePrompt(userGoals, userIdeas, recentHistory, pastIdeas);
-
   console.log("[orchestrator] Running check-in for user:", userId);
 
-  try {
-    const response = await _runClaude(prompt);
-    const proposal = parseClaudeResponse(response.result);
-
-    if (!proposal) {
-      await channel.send(channelId, "I had trouble generating a proposal. Please try `.checkin` again.");
-      return null;
-    }
-
-    // Store any new ideas from the proposal
-    if (proposal.newIdeas && proposal.newIdeas.length > 0) {
-      const ideas = loadIdeas();
-      const primaryGoalId = userGoals[0].id;
-
-      for (const newIdea of proposal.newIdeas) {
-        ideas.push({
-          id: generateId(),
-          goalId: primaryGoalId,
-          text: newIdea.text,
-          status: "new",
-          reasoning: newIdea.reasoning || "",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      saveIdeas(ideas);
-    }
-
-    // Update state with pending proposal
-    const state = loadState();
-    state[userId] = {
-      lastCheckIn: new Date().toISOString(),
-      pendingProposal: {
-        actions: proposal.actions,
-        reasoning: proposal.reasoning,
-        createdAt: new Date().toISOString(),
-      },
-      awaitingApproval: true,
-      channelType,
-      channelId,
-    };
-    saveState(state);
-
-    // Register notification for pending proposal
-    if (_registerNotification) {
-      _registerNotification(`orchestrator-${userId}`, {
-        pluginName: "orchestrator",
-        label: "Pending proposal awaiting approval",
-        type: "proposal",
-        meta: { userId, actions: proposal.actions.length },
-      });
-    }
-
-    // Send formatted message to user
-    const message = formatProposalMessage(proposal, userGoals);
-    await channel.send(channelId, message);
-
-    return proposal;
-  } catch (err) {
-    console.error("[orchestrator] Check-in error:", err.message);
-    await channel.send(channelId, `Check-in error: ${err.message.slice(0, 200)}`);
+  const result = await generateProposalData(userId);
+  if (result.error) {
+    await channel.send(channelId, result.error.message);
     return null;
   }
+
+  const { proposal, userGoals } = result;
+  const now = new Date().toISOString();
+
+  // Update state with pending proposal
+  const state = loadState();
+  state[userId] = {
+    lastCheckIn: now,
+    pendingProposal: {
+      actions: proposal.actions,
+      reasoning: proposal.reasoning,
+      createdAt: now,
+    },
+    awaitingApproval: true,
+    channelType,
+    channelId,
+  };
+  saveState(state);
+
+  // Register notification for pending proposal
+  if (_registerNotification) {
+    _registerNotification(`orchestrator-${userId}`, {
+      pluginName: "orchestrator",
+      label: "Pending proposal awaiting approval",
+      type: "proposal",
+      meta: { userId, actions: proposal.actions.length },
+    });
+  }
+
+  // Send formatted message to user
+  const message = formatProposalMessage(proposal, userGoals);
+  await channel.send(channelId, message);
+
+  return proposal;
 }
 
 function buildExecutionPrompt(action, goal) {
@@ -472,6 +527,7 @@ export default {
     rmgoal: "Remove/pause a goal by number or ID",
     oidea: "Add an idea for your current goal",
     ideas: "Show current ideas being tracked",
+    ocook: "Auto-run N check-ins (default 1) and auto-approve them",
     approve: "Approve pending orchestrator proposal",
     reject: "Reject proposal with optional feedback",
     checkin: "Trigger manual check-in now",
@@ -666,33 +722,7 @@ export default {
       }
 
       const proposal = userState.pendingProposal;
-
-      // Record approval in history
-      const history = loadHistory();
-      for (const action of proposal.actions) {
-        history.push({
-          userId: msg.userId,
-          action: action.description,
-          why: action.why,
-          status: "approved",
-          approvedAt: new Date().toISOString(),
-          proposedAt: proposal.createdAt,
-        });
-      }
-      saveHistory(history);
-
-      // Update ideas that were part of the proposal to "in_progress"
-      const ideas = loadIdeas();
-      const goals = loadGoals().filter(g => g.userId === msg.userId && g.status === "active");
-      const goalIds = new Set(goals.map(g => g.id));
-
-      for (const idea of ideas) {
-        if (goalIds.has(idea.goalId) && idea.status === "new") {
-          idea.status = "exploring";
-          idea.updatedAt = new Date().toISOString();
-        }
-      }
-      saveIdeas(ideas);
+      const { primaryGoal } = applyProposalEffects(msg.userId, proposal);
 
       // Clear pending state
       userState.awaitingApproval = false;
@@ -705,14 +735,11 @@ export default {
         _unregisterNotification(`orchestrator-${msg.userId}`);
       }
 
-      const actionList = proposal.actions.map((a, i) => `${i + 1}. ${a.description}`).join("\n");
+      const actionList = (proposal.actions || []).map((a, i) => `${i + 1}. ${a.description}`).join("\n");
       await reply(`✅ Approved! Here's today's focus:\n\n${actionList}\n\n🚀 Executing now...`);
 
-      // Get the user's primary goal for context (reuse goals from above)
-      const primaryGoal = goals[0] || { text: "No goal set", context: "" };
-
       // Execute actions (don't await — let it run in background so the user isn't blocked)
-      executeActions(proposal.actions, primaryGoal, msg.userId, msg.channelType, msg.channelId).catch(err => {
+      executeActions(proposal.actions || [], primaryGoal, msg.userId, msg.channelType, msg.channelId).catch(err => {
         console.error("[orchestrator] executeActions failed:", err.message);
       });
     },
@@ -767,6 +794,55 @@ export default {
 
       await reply("🔄 Running check-in...");
       await runCheckIn(msg.userId, msg.channelType, msg.channelId);
+    },
+
+    ocook: async (msg, { reply, channels, claude }) => {
+      if (!_channels) _channels = channels;
+      if (!_runClaude) _runClaude = claude;
+
+      const argsText = msg.text.replace(/^\.ocook\s*/i, "").trim();
+      let count = parseInt(argsText, 10);
+      if (Number.isNaN(count) || count < 1) {
+        count = 1;
+      }
+      const maxCook = Number(process.env.ORCHESTRATOR_COOK_LIMIT || 5) || 5;
+      if (count > maxCook) count = maxCook;
+
+      await reply(`🍳 Starting orchestrator cook (${count} batch${count === 1 ? "" : "es"})...`);
+
+      let completed = 0;
+      const summaries = [];
+
+      for (let i = 0; i < count; i++) {
+        const result = await generateProposalData(msg.userId);
+        if (result.error) {
+          await reply(`⚠️ Cook ${i + 1}/${count} stopped: ${result.error.message}`);
+          break;
+        }
+
+        const { proposal, userGoals } = result;
+        const timestamp = new Date().toISOString();
+        proposal.createdAt = timestamp;
+
+        const actionCount = proposal.actions?.length || 0;
+        await reply(`🥘 Cook ${i + 1}/${count} ready (${actionCount} action${actionCount === 1 ? "" : "s"}). Approving & executing...`);
+
+        const { primaryGoal } = applyProposalEffects(msg.userId, proposal, userGoals);
+        completed += 1;
+        summaries.push(`Cook ${i + 1}: ${actionCount} action${actionCount === 1 ? "" : "s"}`);
+
+        executeActions(proposal.actions || [], primaryGoal, msg.userId, msg.channelType, msg.channelId).catch(err => {
+          console.error("[orchestrator] executeActions failed:", err.message);
+        });
+      }
+
+      if (completed > 0) {
+        await reply(
+          `🍽️ Finished ${completed}/${count} cook${completed === 1 ? "" : "s"}.\n` +
+          summaries.join("\n") +
+          `\n\nUse \`.results\` later to review the outputs.`
+        );
+      }
     },
 
     ostatus: async (msg, { reply }) => {
