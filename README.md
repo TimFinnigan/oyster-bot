@@ -507,6 +507,23 @@ Sessions are maintained per chat, allowing for continuous conversations. Use `/r
 - **Budget caps**: Keep `CLAUDE_MAX_BUDGET_USD` low to prevent runaway costs
 - **Skip permissions**: Only use `CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS` if you trust all whitelisted users
 
+## Troubleshooting
+
+### Claude Code session crashes or becomes unresponsive
+
+If Claude Code stops responding (e.g. the bot hangs or errors persist), `pm2 restart` won't fix it — that only restarts the bot process, not the underlying Claude Code session.
+
+**Fix:** Delete the PM2 process and recreate it:
+
+```bash
+pm2 delete oyster-bot
+pm2 start ecosystem.config.cjs
+```
+
+### Claude Pro/Max subscription expired
+
+If your Claude Pro/Max subscription has lapsed, Claude Code will fail silently or throw auth errors. Renew your subscription at [claude.ai](https://claude.ai), then start a fresh Claude Code instance (see above). A simple `pm2 restart` is not sufficient — you need to fully delete and recreate the process so Claude Code re-authenticates.
+
 ## License
 
 MIT
