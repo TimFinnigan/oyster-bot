@@ -13,7 +13,8 @@
 module.exports = {
   apps: [{
     name: 'oyster-bot',
-    script: 'src/app.js',
+    script: 'caffeinate',
+    args: '-i node src/app.js',
     cwd: __dirname,               // Resolve relative paths (.env, plugins, logs) from repo root
     
     // Crash loop protection
