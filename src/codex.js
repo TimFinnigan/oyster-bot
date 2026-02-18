@@ -181,6 +181,19 @@ export function runCodex(prompt, sessionId = null) {
 
       try {
         if (code !== 0) {
+          const combinedOutput = `${stderr}\n${stdout}`;
+          const hasRolloutPathError =
+            Boolean(sessionId) &&
+            /state db missing rollout path|missing rollout path for thread/i.test(combinedOutput);
+
+          if (hasRolloutPathError) {
+            console.warn(
+              `[codex] Resume failed for session ${sessionId}; retrying without resume.`
+            );
+            runCodex(prompt, null).then(finishResolve).catch(finishReject);
+            return;
+          }
+
           throw new Error(`Codex exited with code ${code}: ${stderr.slice(0, 500) || stdout.slice(0, 500)}`);
         }
 

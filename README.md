@@ -275,75 +275,91 @@ The bot supports a plugin system for adding custom commands and scheduled tasks.
 
 **Admin Plugin** (`plugins/admin.js`)
 
-Bot management:
-- `.status` — Show bot uptime, memory usage, and PID
-- `.reload` — Hot reload all plugins without restarting the process
-- `.restart` — Full process restart (requires PM2)
+Bot management shortcuts:
+- `.status` — Show bot uptime, memory usage, Node version, PID
+- `.reload` — Hot reload all plugins without restarting Node
+- `.restart` — Restart the PM2 process (`pm2 restart oyster-bot`)
+- `.stop` — Stop the bot (use `.restart` or PM2 to bring it back)
 
-Git workflow (commit, PR, merge from Telegram):
-- `.git` — Show current branch and changed files
-- `.branch [name]` — Create and switch to new branch (auto-generates name if not provided)
-- `.commit [msg]` — Stage all and commit (auto-generates message if not provided)
-- `.push` — Push current branch to remote
-- `.pr [title]` — Create PR with auto-generated description
-- `.merge [squash|rebase]` — Merge PR and delete branch (defaults to squash)
-- `.ship [branch-name]` — All-in-one: branch → commit → push → PR → merge (creates branch if on main)
+**Git Plugin** (`plugins/git.js`)
+
+End-to-end git workflow without leaving Telegram:
+- `.changes` — Summarize staged + unstaged changes (uses Claude/Codex)
+- `.git` — Show current branch + short status
+- `.branch [name]` — Create/switch feature branches (auto-names if blank)
+- `.commit [msg]` — Stage everything and commit (AI commit message if blank)
+- `.push` — Push `HEAD` to origin
+- `.pr [title]` — Create a GitHub PR with AI-generated title/body
+- `.merge [squash|merge|rebase]` — Merge the open PR and clean up
+- `.ship [branch?]` — All-in-one branch → commit → push → PR → merge flow  
+  _(If Claude hits its quota, the plugin auto-falls back to Codex so PR text still gets generated.)_
+
+**Feature Request Plugin** (`plugins/feature.js`)
+
+Claude brainstorms or implements GitHub issues (requires authenticated `gh` CLI):
+- `.feature` — Brainstorm one feature request and open an issue
+- `.feature 3` — Brainstorm N ideas (max 5) and open issues for each
+- `.feature <idea text>` — Skip brainstorming and file a specific request
+- `.feature do <issue#>` — Ask Claude to implement an existing GitHub issue
+
+**Help Plugin** (`plugins/help.js`)
+- `.help` — List every registered command grouped by plugin (great when new plugins are added)
 
 **Quotes Plugin** (`plugins/quotes.js`)
-- `.quote` — Get an AI-generated motivational quote on demand
-- Scheduled quotes — Sends you a positive message on a schedule
+- `.quote` — Get a real inspiring quote (no repeats; logged to disk)
+- Scheduled job sends a daily quote to `PLUGIN_TARGET_CHAT_ID` (cron configurable via `QUOTES_CRON`)
 
-**Food Diary Plugin** (`plugins/food-diary.js`)
-- `.food <item>` — Log what you ate
-- `.food` — Prompts you then logs your response
-- `.foodlog` — View your recent food entries
+**Recipe Plugin** (`plugins/recipe.js`)
+- `.recipe chicken, rice, garlic --quick --vegetarian` — Generates a single practical recipe  
+  Flags: `--vegetarian`, `--vegan`, `--quick` (≤30 min)
 
 **Reminder Plugin** (`plugins/reminder.js`)
-- `.reminder <text> <time>` — Set a reminder (e.g., `.reminder call mom 30m`)
-- `.reminders` — View your pending reminders
-- `.cancelreminder <id>` — Cancel a reminder by ID
-- Time formats: `30s`, `5m`, `2h`, `1d` (seconds, minutes, hours, days)
+- `.reminder <text> <time>` — e.g., `.reminder pay rent 2h`
+- `.reminders` — Numbered list of pending reminders (IDs still shown)
+- `.cancelreminder <number|id>` — Cancel by list number **or** unique ID
+- `.reminderlog` — View recently completed reminders
+- `.every <time> <text>` — Daily reminder (also accepts weekdays like `mon 8am stretch`)
+- `.recurring` — View/manage recurring reminders
 
 **Weather Plugin** (`plugins/weather.js`)
-- `.weather` — Get weather for your default location (or share location on Telegram)
-- `.weather <location>` — Get weather for a specific place
-- Scheduled weather — Sends daily weather report
+- `.weather` — Prompt to share your location, or use your default location
+- `.weather <city>` — Fetch weather for a specific place using Open‑Meteo
+- Scheduled daily forecast (default 8 AM) controlled by `WEATHER_CRON`
 
 **Orchestrator Plugin** (`plugins/orchestrator.js`)
 
-A self-organizing agent that helps you achieve goals through daily check-ins.
+A self-organizing agent that runs daily check-ins, tracks ideas, and executes tasks.
 
 Commands:
-- `.goal <text>` — Add a goal (e.g., `.goal Build an audience around AI content`)
-- `.goals` — List your active goals
-- `.rmgoal <n>` — Pause a goal by number
-- `.oidea <text>` — Add an idea for your primary goal
-- `.ideas` — View tracked ideas by status
-- `.checkin` — Trigger a check-in now (or wait for schedule)
-- `.ocook [n]` — Auto-run `n` check-ins (default 1) and auto-approve them
-- `.approve` — Approve the pending proposal
-- `.reject [feedback]` — Reject with optional feedback
-- `.ostatus` — View orchestrator status
+- `.goal <text>` / `.goals` / `.rmgoal <n>`
+- `.oidea <text>` — Manually seed ideas for your main goal
+- `.ideas` — View tracked ideas grouped by status
+- `.checkin` — Run the AI planning loop now instead of waiting for cron
+- `.ocook [n]` — Auto-run N check-ins (default 1) and auto-approve them (great before bed)
+- `.approve` / `.reject [feedback]` — Review pending proposals
+- `.ostatus` — Show recent activity + whether a proposal is waiting
+- `.results` — Dump today’s execution outputs (after `.approve` or `.ocook`)
 
 Example workflow:
 ```
 .goal Build an audience around AI content - I have a newsletter
 
 .checkin
-
-# Claude proposes actions:
-# 🎯 Daily Check-in
-# 1. Research successful AI newsletters
-# 2. Draft outline for "state of AI agents" post
-#
-# Reply .approve to proceed, or .reject [feedback]
-
+# -> Claude proposes 2–3 actions
 .approve
-
-# ✅ Approved! Here's today's focus:
-# 1. Research successful AI newsletters
-# 2. Draft outline for "state of AI agents" post
+# -> Actions execute automatically; later run .results to read the drafts/research
 ```
+
+**Routine Breaker Plugin** (`../local-oyster-bot-plugins/active/routine-breaker.js`)
+- `.routine` — Get a quick suggestion to shake up your day (different weekday/weekend zones)
+- Also schedules one random suggestion between 9 AM–12 PM daily
+
+**Keepalive Plugin** (`plugins/keepalive.js`)
+- No commands; simply logs a heartbeat every 5 minutes so the event loop stays warm
+
+**Quotes/Weather target chat**
+
+Set `PLUGIN_TARGET_CHAT_ID` (and optionally `plugins.targetChannel`) in `.env` so scheduled plugins know which chat to message.
 
 Configure in `.env`:
 ```bash
@@ -448,12 +464,16 @@ oyster-bot/
 │   └── types/
 │       └── message.js    # Unified message type
 ├── plugins/              # Plugin directory (add your own here)
-│   ├── admin.js          # Admin commands (reload, restart, status)
-│   ├── quotes.js         # Motivational quotes plugin
-│   ├── food-diary.js     # Food diary plugin
-│   ├── orchestrator.js   # Goal tracking and daily check-ins
-│   ├── reminder.js       # Reminders plugin
-│   └── weather.js        # Weather plugin
+│   ├── admin.js          # Admin commands (reload/restart/status/stop)
+│   ├── feature.js        # GitHub feature request automation
+│   ├── git.js            # AI-assisted git workflow helpers
+│   ├── help.js           # Lists all available commands
+│   ├── keepalive.js      # Background heartbeat
+│   ├── orchestrator.js   # Goal tracking and daily execution
+│   ├── quotes.js         # Motivational quotes
+│   ├── recipe.js         # Ingredient → recipe generator
+│   ├── reminder.js       # One-off + recurring reminders
+│   └── weather.js        # Open-Meteo weather summaries
 ├── ecosystem.config.cjs  # PM2 process manager config
 ├── package.json
 ├── .env                  # Environment variables (not committed)
