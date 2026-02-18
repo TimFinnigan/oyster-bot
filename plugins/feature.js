@@ -26,6 +26,32 @@ function getExistingFeatures() {
   }
 }
 
+function buildSpecificPrompt(idea, existing) {
+  const existingClause = existing.length > 0
+    ? `\n\nDo NOT suggest any of these already-existing feature requests:\n${existing.map((t) => `- ${t}`).join("\n")}`
+    : "";
+
+  return `You are a product manager for "oyster-bot" — a self-hosted Telegram bot that wraps Claude AI. It supports plugins, reminders, weather, quotes, a routine-breaker, and an orchestrator for goal tracking.
+
+The user wants to create a GitHub feature request for this idea:
+"${idea}"
+
+Write a full GitHub issue with:
+- A concise title
+- A ## Summary section (2-3 sentences)
+- A ## Motivation section (why it's useful)
+- A ## Proposed Solution section (how it could work)
+- A ## Acceptance Criteria section (bulleted checklist)${existingClause}
+
+Output ONLY valid JSON in this exact format, no other text:
+[
+  {
+    "title": "issue title",
+    "body": "full markdown body"
+  }
+]`;
+}
+
 function buildBrainstormPrompt(count, existing) {
   const existingClause = existing.length > 0
     ? `\n\nDo NOT suggest any of these already-existing feature requests:\n${existing.map((t) => `- ${t}`).join("\n")}`
@@ -77,16 +103,25 @@ export default {
   commands: {
     feature: async (msg, { reply, sendTyping, claude }) => {
       const input = msg.text.replace(/^\.feature\s*/i, "").trim();
-      const count = Math.min(parseInt(input, 10) || 1, 5);
+      const isNumber = /^\d+$/.test(input);
+      const count = isNumber ? Math.min(parseInt(input, 10), 5) : 1;
+      const specificIdea = !isNumber && input ? input : null;
 
       await sendTyping();
-      await reply(`🧠 Brainstorming ${count} feature idea${count > 1 ? "s" : ""}...`);
+      if (specificIdea) {
+        await reply(`📝 Writing up feature request for: "${specificIdea}"...`);
+      } else {
+        await reply(`🧠 Brainstorming ${count} feature idea${count > 1 ? "s" : ""}...`);
+      }
 
       const existing = getExistingFeatures();
 
       let ideas;
       try {
-        const response = await claude(buildBrainstormPrompt(count, existing));
+        const prompt = specificIdea
+          ? buildSpecificPrompt(specificIdea, existing)
+          : buildBrainstormPrompt(count, existing);
+        const response = await claude(prompt);
         const raw = response.result || response.content || "";
 
         const jsonMatch = raw.match(/\[[\s\S]*\]/);
