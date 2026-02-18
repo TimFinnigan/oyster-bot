@@ -119,7 +119,7 @@ async function fetchWeatherData(latitude, longitude, timezone = "auto") {
   const params = new URLSearchParams({
     latitude: String(latitude),
     longitude: String(longitude),
-    current: "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code",
+    current: "temperature_2m,wind_speed_10m,wind_direction_10m,weather_code",
     daily: "temperature_2m_max,temperature_2m_min",
     temperature_unit: units,
     wind_speed_unit: windUnit,
@@ -158,7 +158,6 @@ function formatWeatherResponse(data, locationName) {
     ``,
     `🌡️ Temperature: ${temp}°${tempSymbol}`,
     `☁️ Conditions: ${weatherInfo.description}`,
-    `💧 Humidity: ${current.relative_humidity_2m}%`,
     `💨 Wind: ${windSpeed} ${windUnitLabel} ${windDir}`,
     `📅 Today: ${high}°${tempSymbol} / ${low}°${tempSymbol}`,
   ].join("\n");
