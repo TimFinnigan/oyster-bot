@@ -77,6 +77,31 @@ Output ONLY valid JSON in this exact format, no other text:
 ]`;
 }
 
+function getIssue(number) {
+  const out = _execSync(
+    `gh issue view ${number} --repo ${GITHUB_REPO} --json title,body,url`,
+    { encoding: "utf-8" }
+  );
+  return JSON.parse(out);
+}
+
+function buildImplementPrompt(issue) {
+  return `You are implementing a feature for "oyster-bot" — a self-hosted Telegram bot that wraps Claude AI.
+
+Here is the GitHub feature request to implement:
+
+# ${issue.title}
+
+${issue.body}
+
+## Instructions
+- Implement this feature in the oyster-bot codebase at /Users/tim/Claude/oyster-bot
+- Follow existing patterns (look at other plugins for reference)
+- New plugins go in /Users/tim/Claude/oyster-bot/plugins/
+- Keep it simple and focused — only implement what the issue describes
+- When done, summarize what you changed and which files were modified`;
+}
+
 async function createIssue(title, body) {
   const { writeFileSync, unlinkSync } = await import("fs");
   const { tmpdir } = await import("os");
@@ -97,12 +122,41 @@ export default {
   name: "feature",
 
   help: {
-    feature: "Brainstorm feature ideas and open GitHub issues (e.g. .feature or .feature 3)",
+    feature: "Brainstorm/create feature requests or implement one. Usage: .feature | .feature 3 | .feature <idea> | .feature do <number>",
   },
 
   commands: {
     feature: async (msg, { reply, sendTyping, claude }) => {
       const input = msg.text.replace(/^\.feature\s*/i, "").trim();
+
+      // .feature do <number> — implement a GitHub issue
+      const doMatch = input.match(/^do\s+(\d+)$/i);
+      if (doMatch) {
+        const issueNumber = parseInt(doMatch[1], 10);
+        await sendTyping();
+
+        let issue;
+        try {
+          issue = getIssue(issueNumber);
+        } catch (err) {
+          await reply(`❌ Couldn't fetch issue #${issueNumber}: ${err.message.slice(0, 200)}`);
+          return;
+        }
+
+        await reply(`🔨 Implementing: **${issue.title}**\n\nThis may take a minute...`);
+
+        try {
+          const response = await claude(buildImplementPrompt(issue));
+          const summary = response.result || response.content || "Done.";
+          const truncated = summary.length > 3500 ? summary.slice(0, 3500) + "\n\n...(truncated)" : summary;
+          await reply(`✅ Implementation complete!\n\n${truncated}\n\nRun \`.ship\` when ready to commit and PR.`);
+        } catch (err) {
+          console.error("[feature] Implementation error:", err.message);
+          await reply(`❌ Implementation failed: ${err.message.slice(0, 200)}`);
+        }
+        return;
+      }
+
       const isNumber = /^\d+$/.test(input);
       const count = isNumber ? Math.min(parseInt(input, 10), 5) : 1;
       const specificIdea = !isNumber && input ? input : null;
