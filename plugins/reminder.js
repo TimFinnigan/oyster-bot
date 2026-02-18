@@ -115,6 +115,23 @@ function saveRecurring(recurring) {
 }
 
 /**
+ * Parse a day-of-week string like "monday", "mon", "tue" into 0-6 (Sun=0).
+ * Returns null if not a valid day name.
+ */
+function parseDayOfWeek(str) {
+  const days = {
+    sun: 0, sunday: 0,
+    mon: 1, monday: 1,
+    tue: 2, tuesday: 2,
+    wed: 3, wednesday: 3,
+    thu: 4, thursday: 4,
+    fri: 5, friday: 5,
+    sat: 6, saturday: 6,
+  };
+  return days[str.toLowerCase()] ?? null;
+}
+
+/**
  * Parse a clock time string like "10pm", "8:30am", "22:00" into { hour, minute }.
  * Returns null if invalid.
  */
@@ -148,15 +165,28 @@ function parseClockTime(str) {
 
 /**
  * Get the next occurrence of a given clock time as a Date.
- * If the time has already passed today, returns tomorrow's occurrence.
+ * If dayOfWeek (0-6, Sun=0) is provided, finds the next occurrence on that weekday.
+ * If the time has already passed today (or this week), advances accordingly.
  */
-function getNextOccurrence(hour, minute) {
+function getNextOccurrence(hour, minute, dayOfWeek = null) {
   const now = new Date();
   const next = new Date();
   next.setHours(hour, minute, 0, 0);
 
-  if (next.getTime() <= now.getTime()) {
-    next.setDate(next.getDate() + 1);
+  if (dayOfWeek === null) {
+    // Daily: if time passed today, use tomorrow
+    if (next.getTime() <= now.getTime()) {
+      next.setDate(next.getDate() + 1);
+    }
+  } else {
+    // Specific weekday: advance until we hit the right day
+    const currentDay = next.getDay();
+    let daysUntil = (dayOfWeek - currentDay + 7) % 7;
+    // If it's today but time has passed, go to next week
+    if (daysUntil === 0 && next.getTime() <= now.getTime()) {
+      daysUntil = 7;
+    }
+    next.setDate(next.getDate() + daysUntil);
   }
 
   return next;
@@ -208,7 +238,7 @@ function scheduleRecurring(recurring) {
     clearTimeout(activeTimeouts.get(recurring.id));
   }
 
-  const next = getNextOccurrence(recurring.hour, recurring.minute);
+  const next = getNextOccurrence(recurring.hour, recurring.minute, recurring.dayOfWeek ?? null);
   const delay = next.getTime() - Date.now();
 
   const timeoutId = setTimeout(() => sendRecurringReminder(recurring), delay);
@@ -219,7 +249,7 @@ function scheduleRecurring(recurring) {
       label: recurring.text,
       type: "recurring",
       nextAt: next.toISOString(),
-      meta: { hour: recurring.hour, minute: recurring.minute },
+      meta: { hour: recurring.hour, minute: recurring.minute, dayOfWeek: recurring.dayOfWeek ?? null },
     });
   }
 }
@@ -556,20 +586,31 @@ export default {
       }
 
       const parts = input.split(/\s+/);
-      const timeStr = parts[0];
+
+      // Check if first token is a day name
+      let dayOfWeek = null;
+      let timeIndex = 0;
+      const maybeDay = parseDayOfWeek(parts[0]);
+      if (maybeDay !== null) {
+        dayOfWeek = maybeDay;
+        timeIndex = 1;
+      }
+
+      const timeStr = parts[timeIndex];
       const parsed = parseClockTime(timeStr);
 
       if (!parsed) {
-        await reply("❌ Invalid clock time. Use formats like: `10pm`, `8:30am`, `22:00`\n\nExample: `.every 9am drink water`");
+        await reply("❌ Invalid format. Examples:\n`.every 9am drink water` (daily)\n`.every monday 9am gym` (weekly)");
         return;
       }
 
-      const text = parts.slice(1).join(" ");
+      const text = parts.slice(timeIndex + 1).join(" ");
       if (!text) {
-        await reply("❌ Please specify what to remind you about.\n\nExample: `.every 10pm are you in bed yet?`");
+        await reply("❌ Please specify what to remind you about.\n\nExamples: `.every 10pm are you in bed yet?` or `.every monday 9am gym`");
         return;
       }
 
+      const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
       const recurring = {
         id: generateId(),
         userId: msg.userId,
@@ -578,6 +619,7 @@ export default {
         text,
         hour: parsed.hour,
         minute: parsed.minute,
+        dayOfWeek,
         createdAt: new Date().toISOString(),
       };
 
@@ -587,10 +629,13 @@ export default {
 
       scheduleRecurring(recurring);
 
-      const next = getNextOccurrence(parsed.hour, parsed.minute);
+      const next = getNextOccurrence(parsed.hour, parsed.minute, dayOfWeek);
       const delay = next.getTime() - Date.now();
+      const scheduleLabel = dayOfWeek !== null
+        ? `every ${DAY_NAMES[dayOfWeek]} at ${formatClockTime(parsed.hour, parsed.minute)}`
+        : `daily at ${formatClockTime(parsed.hour, parsed.minute)}`;
 
-      await reply(`🔁 Recurring reminder set for daily at ${formatClockTime(parsed.hour, parsed.minute)}.\n📝 "${text}"\n⏳ First fire in ${formatDuration(delay)}`);
+      await reply(`🔁 Recurring reminder set for ${scheduleLabel}.\n📝 "${text}"\n⏳ First fire in ${formatDuration(delay)}`);
     },
 
     recurring: async (msg, { reply }) => {
@@ -601,10 +646,14 @@ export default {
         return;
       }
 
+      const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
       const lines = all.map((r, i) => {
-        const next = getNextOccurrence(r.hour, r.minute);
+        const next = getNextOccurrence(r.hour, r.minute, r.dayOfWeek ?? null);
         const delay = next.getTime() - Date.now();
-        return `${i + 1}. "${r.text}" — daily at ${formatClockTime(r.hour, r.minute)} (next in ${formatDuration(delay)})`;
+        const scheduleLabel = r.dayOfWeek != null
+          ? `every ${DAY_NAMES[r.dayOfWeek]} at ${formatClockTime(r.hour, r.minute)}`
+          : `daily at ${formatClockTime(r.hour, r.minute)}`;
+        return `${i + 1}. "${r.text}" — ${scheduleLabel} (next in ${formatDuration(delay)})`;
       });
 
       await reply(`🔁 Your recurring reminders:\n\n${lines.join("\n")}\n\nCancel with: \`.cancelreminder <number>\``);
