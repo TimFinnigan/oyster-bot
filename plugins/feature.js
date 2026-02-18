@@ -1,93 +1,116 @@
 /**
  * Feature Request Plugin
  *
- * Takes a short feature idea and uses Claude to write it up as a full
- * GitHub issue, then opens it with the "feature-request" label.
+ * Claude brainstorms feature ideas for oyster-bot, then opens GitHub issues.
+ * Ignores all existing open/closed feature requests to avoid duplicates.
  *
- * - .feature <idea> — Write up and open a GitHub feature request issue
+ * - .feature — Brainstorm 1 feature idea and open a GitHub issue
+ * - .feature 3 — Brainstorm 3 feature ideas and open issues for each
  *
- * Requires: gh CLI authenticated and GITHUB_REPO set in .env (e.g. "owner/repo")
+ * Requires: gh CLI authenticated
  */
 
 const GITHUB_REPO = process.env.GITHUB_REPO || "TimFinnigan/oyster-bot";
 
-function buildPrompt(idea) {
-  return `You are a software product manager writing a GitHub feature request issue.
+import { execSync as _execSync } from "child_process";
 
-The user has submitted this feature idea:
-"${idea}"
+function getExistingFeatures() {
+  try {
+    const out = _execSync(
+      `gh issue list --repo ${GITHUB_REPO} --state all --label "feature-request" --json title --limit 200`,
+      { encoding: "utf-8" }
+    );
+    return JSON.parse(out).map((i) => i.title);
+  } catch {
+    return [];
+  }
+}
 
-Write a clear, well-structured GitHub issue for this feature request. Include:
-- A concise title (one line, no prefix like "Feature:" needed)
-- A ## Summary section (2-3 sentences describing the feature)
-- A ## Motivation section (why this would be useful)
-- A ## Proposed Solution section (how it could work, with specifics)
-- A ## Acceptance Criteria section (bulleted checklist of what "done" looks like)
+function buildBrainstormPrompt(count, existing) {
+  const existingClause = existing.length > 0
+    ? `\n\nDo NOT suggest any of these already-existing feature requests:\n${existing.map((t) => `- ${t}`).join("\n")}`
+    : "";
 
-Keep it practical and grounded. Don't over-engineer. Output ONLY valid JSON in this exact format, no other text:
-{
-  "title": "issue title here",
-  "body": "full markdown body here"
-}`;
+  return `You are a product manager for "oyster-bot" — a self-hosted Telegram bot that wraps Claude AI. It supports plugins, reminders, weather, quotes, a routine-breaker, and an orchestrator for goal tracking. Users chat with Claude via Telegram from their phone.
+
+Brainstorm ${count} genuinely useful, creative, and distinct feature idea${count > 1 ? "s" : ""} for this bot. Think about what would make it more useful day-to-day for a solo user.
+
+For each idea, write a full GitHub issue with:
+- A concise title
+- A ## Summary section (2-3 sentences)
+- A ## Motivation section (why it's useful)
+- A ## Proposed Solution section (how it could work)
+- A ## Acceptance Criteria section (bulleted checklist)${existingClause}
+
+Output ONLY valid JSON in this exact format, no other text:
+[
+  {
+    "title": "issue title",
+    "body": "full markdown body"
+  }
+]`;
+}
+
+async function createIssue(title, body) {
+  const { writeFileSync, unlinkSync } = await import("fs");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+
+  const tmpFile = join(tmpdir(), `feature-request-${Date.now()}.md`);
+  writeFileSync(tmpFile, body, "utf-8");
+
+  const cmd = `gh issue create --repo ${GITHUB_REPO} --title ${JSON.stringify(title)} --body-file ${JSON.stringify(tmpFile)} --label "feature-request"`;
+  const url = _execSync(cmd, { encoding: "utf-8" }).trim();
+
+  try { unlinkSync(tmpFile); } catch {}
+
+  return url;
 }
 
 export default {
   name: "feature",
 
   help: {
-    feature: "Open a GitHub feature request issue (e.g. .feature add weather alerts)",
+    feature: "Brainstorm feature ideas and open GitHub issues (e.g. .feature or .feature 3)",
   },
 
   commands: {
     feature: async (msg, { reply, sendTyping, claude }) => {
       const input = msg.text.replace(/^\.feature\s*/i, "").trim();
-
-      if (!input) {
-        await reply("Usage: `.feature <idea>`\nExample: `.feature add weather alerts for rain`");
-        return;
-      }
+      const count = Math.min(parseInt(input, 10) || 1, 5);
 
       await sendTyping();
-      await reply(`📝 Writing up feature request for: "${input}"...`);
+      await reply(`🧠 Brainstorming ${count} feature idea${count > 1 ? "s" : ""}...`);
 
-      let title, body;
+      const existing = getExistingFeatures();
 
+      let ideas;
       try {
-        const response = await claude(buildPrompt(input));
+        const response = await claude(buildBrainstormPrompt(count, existing));
         const raw = response.result || response.content || "";
 
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error("No JSON found in response");
+        const jsonMatch = raw.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error("No JSON array found in response");
 
-        const parsed = JSON.parse(jsonMatch[0]);
-        title = parsed.title?.trim();
-        body = parsed.body?.trim();
-
-        if (!title || !body) throw new Error("Missing title or body in response");
+        ideas = JSON.parse(jsonMatch[0]);
+        if (!Array.isArray(ideas) || ideas.length === 0) throw new Error("Empty ideas array");
       } catch (err) {
-        console.error("[feature] Failed to generate issue:", err.message);
-        await reply(`❌ Couldn't write up the feature request: ${err.message}`);
+        console.error("[feature] Failed to brainstorm ideas:", err.message);
+        await reply(`❌ Couldn't generate ideas: ${err.message}`);
         return;
       }
 
-      try {
-        const { execSync } = await import("child_process");
-        const { writeFileSync, unlinkSync } = await import("fs");
-        const { tmpdir } = await import("os");
-        const { join } = await import("path");
+      for (const idea of ideas) {
+        const { title, body } = idea;
+        if (!title || !body) continue;
 
-        const tmpFile = join(tmpdir(), `feature-request-${Date.now()}.md`);
-        writeFileSync(tmpFile, body, "utf-8");
-
-        const cmd = `gh issue create --repo ${GITHUB_REPO} --title ${JSON.stringify(title)} --body-file ${JSON.stringify(tmpFile)} --label "feature-request"`;
-        const output = execSync(cmd, { encoding: "utf-8" }).trim();
-
-        try { unlinkSync(tmpFile); } catch {}
-
-        await reply(`✅ Feature request opened!\n\n**${title}**\n\n${output}`);
-      } catch (err) {
-        console.error("[feature] Failed to create GitHub issue:", err.message);
-        await reply(`❌ Couldn't open GitHub issue: ${err.message.slice(0, 200)}`);
+        try {
+          const url = await createIssue(title, body);
+          await reply(`✅ **${title}**\n${url}`);
+        } catch (err) {
+          console.error("[feature] Failed to create issue:", err.message);
+          await reply(`❌ Failed to open issue for "${title}": ${err.message.slice(0, 200)}`);
+        }
       }
     },
   },
