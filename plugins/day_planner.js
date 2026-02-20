@@ -63,8 +63,20 @@ function todayKey() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD in PT
 }
 
-function planKey(userId) {
-  return `${userId}:${todayKey()}`;
+function dateKey(word) {
+  if (!word || word === "today") return todayKey();
+  if (word === "tomorrow") {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  }
+  // Accept explicit YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(word)) return word;
+  return null; // unrecognized
+}
+
+function planKey(userId, date) {
+  return `${userId}:${date ?? todayKey()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,8 +131,8 @@ function parseTask(raw) {
   let priority = null;
   let durationMins = null;
 
-  // Extract @time
-  text = text.replace(/@(\S+)/g, (_, token) => {
+  // Extract @time (allow optional space: "@12pm" or "@ 12pm")
+  text = text.replace(/@\s*(\S+)/g, (_, token) => {
     const parsed = parseClockTime(token);
     if (parsed && !time) {
       time = parsed;
@@ -193,12 +205,32 @@ function formatTask(task, index, total) {
   let line = `${check} ${index + 1}. ${label}`;
 
   const meta = [];
-  if (task.time) meta.push(`🕐 ${formatTime(task.time)}`);
+  if (task.time) meta.push(`- ${formatTime(task.time)}`);
   if (task.durationMins !== null) meta.push(`⏱ ${formatDuration(task.durationMins)}`);
   if (task.priority) meta.push(PRIORITY_ICONS[task.priority]);
 
   if (meta.length) line += `  ${meta.join("  ")}`;
   return line;
+}
+
+function sectionOrder(task) {
+  if (!task.time) return 0; // Flexible
+  if (task.time.hour < 12) return 1; // Morning
+  if (task.time.hour < 17) return 2; // Afternoon
+  return 3; // Evening
+}
+
+function sortTasks(tasks) {
+  return [...tasks].sort((a, b) => {
+    const sa = sectionOrder(a);
+    const sb = sectionOrder(b);
+    if (sa !== sb) return sa - sb;
+    // Within timed sections, sort chronologically
+    if (a.time && b.time) {
+      return (a.time.hour * 60 + a.time.minute) - (b.time.hour * 60 + b.time.minute);
+    }
+    return 0;
+  });
 }
 
 /**
@@ -225,34 +257,31 @@ function buildAgenda(tasks) {
     }
   });
 
-  // Sort timed sections chronologically
-  for (const key of ["Morning", "Afternoon", "Evening"]) {
-    sections[key].sort((a, b) => {
-      const ta = a.task.time.hour * 60 + a.task.time.minute;
-      const tb = b.task.time.hour * 60 + b.task.time.minute;
-      return ta - tb;
-    });
-  }
-
   return sections;
 }
 
-function renderPlan(tasks) {
-  if (tasks.length === 0) return "No tasks planned for today. Add some with `.plan add <task>`.";
+function renderPlan(tasks, date) {
+  const label = date ?? todayKey();
+  if (tasks.length === 0) return `No tasks planned for ${label}. Add some with \`.plan add <task>\`.`;
 
   const sections = buildAgenda(tasks);
   const sectionIcons = { Morning: "🌅", Afternoon: "☀️", Evening: "🌙", Flexible: "📌" };
 
-  const lines = [`📆  ${todayKey()}`];
+  const lines = [`📆  ${label}`];
 
+  let displayNum = 0;
   for (const [name, entries] of Object.entries(sections)) {
     if (entries.length === 0) continue;
-    lines.push(`\n${sectionIcons[name]}  ${name.toUpperCase()}\n`);
-    for (const { task, idx } of entries) {
-      lines.push(`   ${formatTask(task, idx, tasks.length)}`);
+    lines.push(`\n${sectionIcons[name]}  ${name}\n`);
+    for (const { task } of entries) {
+      lines.push(`   ${formatTask(task, displayNum, tasks.length)}`);
       lines.push("");
+      displayNum++;
     }
   }
+
+  const done = tasks.filter((t) => t.done).length;
+  lines.push(`${done}/${tasks.length} tasks complete`);
 
   return lines.join("\n");
 }
@@ -272,37 +301,50 @@ export default {
     plan: async (msg, { reply }) => {
       const input = msg.text.replace(/^\.plan\s*/i, "").trim();
 
-      if (!input || input.toLowerCase() === "show") {
+      const tokens = input.split(/\s+/);
+      let date = todayKey();
+      let sub = tokens[0].toLowerCase();
+      let rest = tokens.slice(1);
+
+      // Optional date prefix: today, tomorrow, YYYY-MM-DD
+      const parsedDate = dateKey(sub);
+      if (parsedDate) {
+        date = parsedDate;
+        sub = (tokens[1] ?? "show").toLowerCase();
+        rest = tokens.slice(2);
+      }
+
+      // .plan [date] show  (also bare .plan or .plan today/tomorrow with no subcommand)
+      if (!sub || sub === "show") {
         const plans = loadPlans();
-        const tasks = plans[planKey(msg.userId)] ?? [];
-        await reply(renderPlan(tasks));
+        const tasks = plans[planKey(msg.userId, date)] ?? [];
+        await reply(renderPlan(tasks, date));
         return;
       }
 
-      const [sub, ...rest] = input.split(/\s+/);
-      const lowerSub = sub.toLowerCase();
-
-      // .plan today <task1>, <task2>, ...
-      if (lowerSub === "today") {
+      // .plan [date] set <task1>, <task2>, ...
+      if (sub === "set" || sub === "today" || sub === "tomorrow") {
+        // ".plan tomorrow task1, task2" — date already resolved above, sub may be leftover date word
         const raw = rest.join(" ").trim();
         if (!raw) {
-          await reply("Usage: `.plan today <task1>, <task2>, ...`\nExample: `.plan today Email client @9am #high, Lunch @12pm (1h), Review PR`");
+          await reply("Usage: `.plan tomorrow <task1>, <task2>, ...`");
           return;
         }
         const tasks = splitTasks(raw).map(parseTask).filter(Boolean);
         if (tasks.length === 0) {
-          await reply("❌ Couldn't parse any tasks. Try: `.plan today Buy groceries @3pm #high, Read 30m`");
+          await reply("❌ Couldn't parse any tasks.");
           return;
         }
         const plans = loadPlans();
-        plans[planKey(msg.userId)] = tasks;
+        const sorted = sortTasks(tasks);
+        plans[planKey(msg.userId, date)] = sorted;
         savePlans(plans);
-        await reply(`✅ Plan set with ${tasks.length} task(s).\n\n${renderPlan(tasks)}`);
+        await reply(`✅ Plan set for ${date} with ${sorted.length} task(s).\n\n${renderPlan(sorted, date)}`);
         return;
       }
 
-      // .plan add <task>
-      if (lowerSub === "add") {
+      // .plan [date] add <task>
+      if (sub === "add") {
         const raw = rest.join(" ").trim();
         if (!raw) {
           await reply("Usage: `.plan add <task>`\nExample: `.plan add Call dentist @4pm`");
@@ -314,22 +356,21 @@ export default {
           return;
         }
         const plans = loadPlans();
-        const key = planKey(msg.userId);
+        const key = planKey(msg.userId, date);
         if (!plans[key]) plans[key] = [];
-        plans[key].push(task);
+        plans[key] = sortTasks([...plans[key], task]);
         savePlans(plans);
-        await reply(`✅ Added: ${formatTask(task, plans[key].length - 1)}`);
+        const addedIdx = plans[key].findIndex(t => t === task);
+        await reply(`✅ Added to ${date}: ${formatTask(task, addedIdx, plans[key].length)}`);
         return;
       }
 
-      // .plan insert <number> <task>
-      if (lowerSub === "insert") {
-        const numStr = rest[0];
-        const num = parseInt(numStr, 10);
+      // .plan [date] insert <number> <task>
+      if (sub === "insert") {
+        const num = parseInt(rest[0], 10);
         const raw = rest.slice(1).join(" ").trim();
-
         const plans = loadPlans();
-        const key = planKey(msg.userId);
+        const key = planKey(msg.userId, date);
         const tasks = plans[key] ?? [];
 
         if (!raw) {
@@ -346,18 +387,17 @@ export default {
           return;
         }
         tasks.splice(num - 1, 0, task);
-        plans[key] = tasks;
+        plans[key] = sortTasks(tasks);
         savePlans(plans);
-        await reply(`✅ Inserted at position ${num}.\n\n${renderPlan(tasks)}`);
+        await reply(`✅ Inserted.\n\n${renderPlan(plans[key], date)}`);
         return;
       }
 
-      // .plan done <number>
-      if (lowerSub === "done") {
-        const numStr = rest[0];
-        const num = parseInt(numStr, 10);
+      // .plan [date] done <number>
+      if (sub === "done") {
+        const num = parseInt(rest[0], 10);
         const plans = loadPlans();
-        const key = planKey(msg.userId);
+        const key = planKey(msg.userId, date);
         const tasks = plans[key] ?? [];
 
         if (isNaN(num) || num < 1 || num > tasks.length) {
@@ -365,23 +405,41 @@ export default {
           return;
         }
         tasks[num - 1].done = true;
-        plans[key] = tasks;
+        plans[key] = sortTasks(tasks);
         savePlans(plans);
         const done = tasks.filter((t) => t.done).length;
-        await reply(`✅ Marked task ${num} done. (${done}/${tasks.length} complete)\n\n${renderPlan(tasks)}`);
+        await reply(`✅ Marked task ${num} done. (${done}/${tasks.length} complete)\n\n${renderPlan(tasks, date)}`);
         return;
       }
 
-      // .plan clear
-      if (lowerSub === "clear") {
+      // .plan [date] remove <number>
+      if (sub === "remove") {
+        const num = parseInt(rest[0], 10);
         const plans = loadPlans();
-        delete plans[planKey(msg.userId)];
+        const key = planKey(msg.userId, date);
+        const tasks = plans[key] ?? [];
+
+        if (isNaN(num) || num < 1 || num > tasks.length) {
+          await reply(`❌ Invalid task number. Use a number between 1 and ${tasks.length}.`);
+          return;
+        }
+        const [removed] = tasks.splice(num - 1, 1);
+        plans[key] = sortTasks(tasks);
         savePlans(plans);
-        await reply("🗑️ Today's plan cleared.");
+        await reply(`🗑️ Removed: ${removed.label}\n\n${renderPlan(tasks, date)}`);
         return;
       }
 
-      await reply("Unknown subcommand. Use `.plan today`, `.plan show`, `.plan add`, `.plan done`, or `.plan clear`.");
+      // .plan [date] clear
+      if (sub === "clear") {
+        const plans = loadPlans();
+        delete plans[planKey(msg.userId, date)];
+        savePlans(plans);
+        await reply(`🗑️ Plan for ${date} cleared.`);
+        return;
+      }
+
+      await reply("Unknown subcommand. Use `.plan today`, `.plan show`, `.plan add`, `.plan insert`, `.plan done`, or `.plan clear`.");
     },
   },
 };
