@@ -305,6 +305,15 @@ Claude brainstorms or implements GitHub issues (requires authenticated `gh` CLI)
 **Help Plugin** (`plugins/help.js`)
 - `.help` — List every registered command grouped by plugin (great when new plugins are added)
 
+**Auto Plugin** (`plugins/auto.js`)
+
+Automate any other command on a repeating interval:
+- `.auto add 4h .feature` — Run `.feature` every 4 hours
+- `.auto add 1d .feature do 12` — Implement issue #12 once per day
+- `.auto list` / `.auto remove <id|number>` / `.auto run <id|number>` — Manage your automations
+
+Intervals accept `s`, `m`, `h`, `d` units (e.g., `30m`, `6h`, `2d`). Commands run as you, in the same chat where you added them.
+
 **Quotes Plugin** (`plugins/quotes.js`)
 - `.quote` — Get a real inspiring quote (no repeats; logged to disk)
 - Scheduled job sends a daily quote to `PLUGIN_TARGET_CHAT_ID` (cron configurable via `QUOTES_CRON`)
@@ -465,6 +474,7 @@ oyster-bot/
 │       └── message.js    # Unified message type
 ├── plugins/              # Plugin directory (add your own here)
 │   ├── admin.js          # Admin commands (reload/restart/status/stop)
+│   ├── auto.js           # Run other commands on a timer
 │   ├── feature.js        # GitHub feature request automation
 │   ├── git.js            # AI-assisted git workflow helpers
 │   ├── help.js           # Lists all available commands
