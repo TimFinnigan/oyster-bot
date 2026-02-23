@@ -18,6 +18,7 @@ import { getDataDir } from "../src/runtime-paths.js";
 
 const DATA_DIR = getDataDir();
 const LOG_FILE = join(DATA_DIR, "gratitude.json");
+const STATE_FILE = join(DATA_DIR, "gratitude-state.json");
 
 // In-memory set of userIds with a pending prompt today
 // { userId -> { channelId, channelType, date } }
@@ -43,6 +44,18 @@ function loadLog() {
   return [];
 }
 
+function loadState() {
+  try {
+    if (existsSync(STATE_FILE)) return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+  } catch {}
+  return {};
+}
+
+function saveState(state) {
+  ensureDataDir();
+  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
 function saveEntry(entry) {
   ensureDataDir();
   const log = loadLog();
@@ -66,34 +79,41 @@ async function sendPrompt(channel, channelId, userId) {
   const date = todayPT();
   await channel.send(channelId, "🌿 What are you grateful for today? Reply directly to this message to save it.");
   pendingPrompts.set(userId, { channelId, channelType: channel.type, date });
+  saveState({ lastPromptDate: date });
   console.log(`[gratitude] Sent prompt to ${userId}`);
 }
 
 /**
  * Schedule a one-time random fire within 9am–8pm PT today.
- * If current time is already past 8pm, skip today.
+ * If current time is already past 8pm, or already prompted today, skip.
  */
 function scheduleRandomPrompt(channel, channelId, userId) {
+  const state = loadState();
+  if (state.lastPromptDate === todayPT()) {
+    console.log("[gratitude] Already prompted today, skipping");
+    return;
+  }
+
   const now = new Date();
-  const nowPT = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
 
-  const startH = 9;
-  const endH = 20; // 8pm
+  // Get current minute-of-day in PT
+  const ptTime = now.toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric", minute: "numeric", hour12: false,
+  });
+  const [ptHour, ptMinute] = ptTime.split(":").map(Number);
+  const ptMinuteOfDay = ptHour * 60 + ptMinute;
 
-  const startToday = new Date(nowPT);
-  startToday.setHours(startH, 0, 0, 0);
+  const startMinute = 9 * 60;  // 9am PT
+  const endMinute   = 20 * 60; // 8pm PT
 
-  const endToday = new Date(nowPT);
-  endToday.setHours(endH, 0, 0, 0);
-
-  if (nowPT >= endToday) {
+  if (ptMinuteOfDay >= endMinute) {
     console.log("[gratitude] Past 8pm PT, skipping today's random prompt");
     return;
   }
 
-  const earliest = Math.max(nowPT.getTime(), startToday.getTime());
-  const windowMs = endToday.getTime() - earliest;
-  const delayMs = Math.floor(Math.random() * windowMs);
+  const windowMinutes = endMinute - Math.max(ptMinuteOfDay, startMinute);
+  const delayMs = Math.floor(Math.random() * windowMinutes * 60 * 1000);
 
   console.log(`[gratitude] Random prompt in ${Math.round(delayMs / 60000)}m`);
   setTimeout(() => sendPrompt(channel, channelId, userId), delayMs);
@@ -162,7 +182,7 @@ export default {
   schedules: [
     {
       // Fires once at midnight PT to schedule the random prompt for the day.
-      cron: process.env.GRATITUDE_CRON || "0 0 * * *",
+      cron: process.env.GRATITUDE_CRON || "0 8 * * *", // ~midnight PT (UTC-8)
 
       handler: async ({ channels, config }) => {
         const targetChatId = config.plugins?.targetChatId;
