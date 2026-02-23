@@ -143,9 +143,25 @@ export default {
         await reply("No gratitude entries yet. Use `.gratitude` to log one!");
         return;
       }
-      const recent = log.slice(-10);
-      const lines = recent.map((e) => `📅 ${e.date}\n🌿 ${e.text}`);
-      await reply(lines.join("\n\n"));
+
+      // Group by date
+      const byDate = {};
+      for (const e of log) {
+        if (!byDate[e.date]) byDate[e.date] = [];
+        byDate[e.date].push(e.text);
+      }
+
+      // Show last 7 days
+      const dates = Object.keys(byDate).sort().reverse().slice(0, 7);
+      const lines = [];
+      for (const date of dates) {
+        lines.push(`📅 ${date}`);
+        for (const text of byDate[date]) {
+          lines.push(`  🌿 ${text}`);
+        }
+      }
+
+      await reply(lines.join("\n"));
     },
   },
 
