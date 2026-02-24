@@ -102,6 +102,7 @@ export function runClaude(prompt, sessionId = null) {
     let stderrBuffer = "";
     let stderrRaw = "";
     let finalResult = null;
+    let lastText = null;
     let parsedSessionId = sessionId || null;
     let webSearchTimer = null;
     let settled = false;
@@ -164,6 +165,15 @@ export function runClaude(prompt, sessionId = null) {
         }
       }
 
+      // Track last text block in case final result is empty
+      if (event.type === "assistant" && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === "text" && block.text?.trim()) {
+            lastText = block.text.trim();
+          }
+        }
+      }
+
       // Capture the final result
       if (event.type === "result") {
         finalResult = event;
@@ -222,7 +232,7 @@ export function runClaude(prompt, sessionId = null) {
 
       if (finalResult) {
         finishResolve({
-          result: finalResult.result,
+          result: finalResult.result || lastText || null,
           session_id: extractSessionIdFromEvent(finalResult) || parsedSessionId,
           cost_usd: finalResult.cost_usd,
           duration_ms: finalResult.duration_ms,
