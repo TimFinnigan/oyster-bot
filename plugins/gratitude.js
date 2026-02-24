@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { getDataDir } from "../src/runtime-paths.js";
+import { isPluginEnabled } from "../src/plugin-settings.js";
 
 const DATA_DIR = getDataDir();
 const LOG_FILE = join(DATA_DIR, "gratitude.json");
@@ -23,6 +24,9 @@ const STATE_FILE = join(DATA_DIR, "gratitude-state.json");
 // In-memory set of userIds with a pending prompt today
 // { userId -> { channelId, channelType, date } }
 const pendingPrompts = new Map();
+
+// Stored at init so deferred setTimeout callbacks can check enabled state
+let _config = null;
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -76,6 +80,10 @@ function todayPT() {
 // ---------------------------------------------------------------------------
 
 async function sendPrompt(channel, channelId, userId) {
+  if (_config && !isPluginEnabled("gratitude", userId, _config)) {
+    console.log("[gratitude] Plugin disabled for user, skipping prompt");
+    return;
+  }
   const date = todayPT();
   await channel.send(channelId, "🌿 What are you grateful for today? Reply directly to this message to save it.");
   pendingPrompts.set(userId, { channelId, channelType: channel.type, date });
@@ -213,6 +221,7 @@ export default {
       cron: process.env.GRATITUDE_CRON || "0 8 * * *", // ~midnight PT (UTC-8)
 
       handler: async ({ channels, config }) => {
+        _config = config;
         const targetChatId = config.plugins?.targetChatId;
         const targetChannel = config.plugins?.targetChannel || "telegram";
 
@@ -233,6 +242,7 @@ export default {
   ],
 
   init: async ({ channels, config }) => {
+    _config = config;
     const targetChatId = config.plugins?.targetChatId;
     const targetChannel = config.plugins?.targetChannel || "telegram";
 

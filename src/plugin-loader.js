@@ -3,6 +3,7 @@ import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import cron from "node-cron";
 import { getDataDir, getPluginDirs } from "./runtime-paths.js";
+import { isPluginEnabled } from "./plugin-settings.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_BUSINESS_IDEAS_OUTPUT_DIR = join(__dirname, "..", "..", "business-ideas");
@@ -36,6 +37,8 @@ const destroyHandlers = [];
 // Notification registry: plugins register active notifications for cross-plugin visibility
 // Map<string, { pluginName, label, type, nextAt?, meta? }>
 const notificationRegistry = new Map();
+// All loaded plugin names (for the plugins management command)
+const loadedPluginNames = new Set();
 let businessIdeasReconcileInterval = null;
 let lastBusinessIdeasReconcileAt = 0;
 
@@ -277,7 +280,8 @@ export async function loadPlugins({ channels, config, runClaude }) {
   _runClaude = runClaude;
   _config = config;
   _channels = channels;
-  
+  loadedPluginNames.clear();
+
   const pluginFiles = discoverPluginFiles();
 
   if (pluginFiles.length === 0) {
@@ -322,6 +326,11 @@ export async function loadPlugins({ channels, config, runClaude }) {
           }
 
           const task = cron.schedule(schedule.cron, async () => {
+            const targetUserId = _config?.plugins?.targetChatId;
+            if (targetUserId && !isPluginEnabled(plugin.name, String(targetUserId), _config)) {
+              console.log(`[plugins] Skipping scheduled task for disabled plugin: ${plugin.name}`);
+              return;
+            }
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
               await schedule.handler({
@@ -377,6 +386,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
         }
       }
 
+      loadedPluginNames.add(plugin.name);
       loadedPlugins.push(plugin.name);
     } catch (err) {
       console.error(`[plugins] Failed to load ${filePath}:`, err.message);
@@ -445,6 +455,7 @@ export async function handlePluginMessage(msg) {
     channels: _channels,
     getRegisteredCommands,
     getRegisteredSchedules,
+    getLoadedPluginNames,
     registerNotification,
     unregisterNotification,
     getRegisteredNotifications,
@@ -454,9 +465,15 @@ export async function handlePluginMessage(msg) {
   if (text.startsWith(".")) {
     const parts = text.slice(1).split(/\s+/);
     const cmdName = parts[0].toLowerCase();
-    
+
     const cmd = commandHandlers.get(cmdName);
     if (cmd) {
+      // Always allow the plugins manager itself so users can re-enable plugins
+      const pluginGated = cmd.pluginName !== "plugins" && !isPluginEnabled(cmd.pluginName, msg.userId, _config);
+      if (pluginGated) {
+        await helpers.reply(`Plugin **${cmd.pluginName}** is disabled. Use \`.plugins enable ${cmd.pluginName}\` to re-enable.`);
+        return true;
+      }
       try {
         await cmd.handler(msg, helpers);
         if (cmdName === "idea" || cmdName === "cook" || cmdName === "idealist") {
@@ -527,6 +544,7 @@ export async function reloadPlugins() {
   // Clear existing handlers
   commandHandlers.clear();
   messageHandlers.length = 0;
+  loadedPluginNames.clear();
   
   // Re-load all plugins with cache-busting
   const pluginFiles = discoverPluginFiles();
@@ -569,6 +587,11 @@ export async function reloadPlugins() {
           }
 
           const task = cron.schedule(schedule.cron, async () => {
+            const targetUserId = _config?.plugins?.targetChatId;
+            if (targetUserId && !isPluginEnabled(plugin.name, String(targetUserId), _config)) {
+              console.log(`[plugins] Skipping scheduled task for disabled plugin: ${plugin.name}`);
+              return;
+            }
             console.log(`[plugins] Running scheduled task for: ${plugin.name}`);
             try {
               await schedule.handler({
@@ -655,6 +678,27 @@ export function getRegisteredCommands() {
     commands.push({ command, pluginName, description });
   }
   return commands;
+}
+
+/**
+ * Get registered commands filtered to those enabled for a specific user.
+ * The "plugins" plugin is always included.
+ */
+function getRegisteredCommandsForUser(userId) {
+  const commands = [];
+  for (const [command, { pluginName, description }] of commandHandlers) {
+    if (pluginName === "plugins" || isPluginEnabled(pluginName, userId, _config)) {
+      commands.push({ command, pluginName, description });
+    }
+  }
+  return commands;
+}
+
+/**
+ * Get the names of all currently loaded plugins.
+ */
+export function getLoadedPluginNames() {
+  return [...loadedPluginNames];
 }
 
 /**
