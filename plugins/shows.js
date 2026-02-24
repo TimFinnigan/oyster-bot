@@ -70,10 +70,9 @@ async function searchShow(query) {
   }));
 }
 
-async function getNextEpisode(showId) {
+async function getShowWithEpisodes(showId) {
   try {
-    const res = await fetch(`${TVMAZE_API}/shows/${showId}/nextepisode`);
-    if (res.status === 404) return null; // no next episode
+    const res = await fetch(`${TVMAZE_API}/shows/${showId}?embed[]=nextepisode&embed[]=previousepisode`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -81,8 +80,8 @@ async function getNextEpisode(showId) {
   }
 }
 
-async function getTodaysEpisodes(dateStr) {
-  const url = `${TVMAZE_API}/schedule?date=${dateStr}&country=US`;
+async function getTodaysEpisodes(dateStr, country = "US") {
+  const url = `${TVMAZE_API}/schedule?date=${dateStr}&country=${country}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`TVMaze schedule failed: ${res.status}`);
   return await res.json();
@@ -120,11 +119,20 @@ export default {
           await reply("No shows tracked. Use `.shows add <name>` to start.");
           return;
         }
-        const nextEps = await Promise.all(shows.map((s) => getNextEpisode(s.id)));
+        const showDetails = await Promise.all(shows.map((s) => getShowWithEpisodes(s.id)));
         const lines = shows.map((s, i) => {
-          const ep = nextEps[i];
-          const detail = ep ? `next ep ${ep.airdate}` : s.status;
-          return `${i + 1}. ${s.name} (${s.network}) — ${detail}`;
+          const detail = showDetails[i];
+          const nextEp = detail?._embedded?.nextepisode;
+          const prevEp = detail?._embedded?.previousepisode;
+          let info;
+          if (nextEp?.airdate) {
+            info = `next ep ${nextEp.airdate}`;
+          } else if (prevEp?.airdate) {
+            info = `last aired ${prevEp.airdate}`;
+          } else {
+            info = s.status;
+          }
+          return `${i + 1}. ${s.name} (${s.network}) — ${info}`;
         });
         await reply(`📺 Your tracked shows:\n\n${lines.join("\n")}`);
         return;
@@ -255,14 +263,28 @@ export default {
 
         let schedule;
         try {
-          schedule = await getTodaysEpisodes(todayPT());
+          schedule = await getTodaysEpisodes(todayPT(), "US");
         } catch (err) {
           console.error("[shows] Failed to fetch schedule:", err.message);
           return;
         }
 
+        // Also fetch GB schedule for UK shows
+        let gbSchedule = [];
+        try {
+          gbSchedule = await getTodaysEpisodes(todayPT(), "GB");
+        } catch {
+          // GB schedule optional
+        }
+
         const trackedIds = new Set(tracked.map((s) => s.id));
-        const airing = schedule.filter((ep) => trackedIds.has(ep.show.id));
+        const combined = [...schedule, ...gbSchedule];
+        const seen = new Set();
+        const airing = combined.filter((ep) => {
+          if (!trackedIds.has(ep.show.id) || seen.has(ep.id)) return false;
+          seen.add(ep.id);
+          return true;
+        });
 
         if (airing.length === 0) return;
 
