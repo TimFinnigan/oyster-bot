@@ -137,6 +137,10 @@ export const config = {
     weatherDefaultLocation: process.env.WEATHER_DEFAULT_LOCATION || null,
     // Temperature units: "fahrenheit" or "celsius"
     weatherUnits: process.env.WEATHER_UNITS || "fahrenheit",
+    // Comma-separated list of plugin names that are disabled by default (opt-in plugins)
+    defaultDisabledPlugins: process.env.PLUGIN_DEFAULT_DISABLED
+      ? process.env.PLUGIN_DEFAULT_DISABLED.split(",").map((s) => s.trim()).filter(Boolean)
+      : [],
   },
 
   // Legacy access for backward compatibility

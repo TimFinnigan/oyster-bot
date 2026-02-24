@@ -305,6 +305,18 @@ Claude brainstorms or implements GitHub issues (requires authenticated `gh` CLI)
 **Help Plugin** (`plugins/help.js`)
 - `.help` — List every registered command grouped by plugin (great when new plugins are added)
 
+**Plugins Plugin** (`plugins/plugins.js`)
+- `.plugins` — List all loaded plugins with enabled/disabled status
+- `.plugins enable <name>` — Enable a plugin for you
+- `.plugins disable <name>` — Disable a plugin for you
+
+Disabling a plugin suppresses its **scheduled alerts** (e.g. daily episode ping, gratitude reminder). Plugin commands (e.g. `.shows list`) still work regardless. Settings are per-user and persist across restarts.
+
+You can also disable plugins for everyone by default via `.env`:
+```bash
+PLUGIN_DEFAULT_DISABLED=shows,gratitude
+```
+
 **Auto Plugin** (`plugins/auto.js`)
 
 Automate any other command on a repeating interval:
