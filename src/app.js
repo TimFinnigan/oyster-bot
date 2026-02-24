@@ -196,7 +196,7 @@ async function handleAIMessage(msg, channel) {
       }
 
       const responseText =
-        result.result || result.content || JSON.stringify(result, null, 2);
+        result.result || result.content || "(no response)";
 
       const chunks = splitMessage(responseText);
       for (const chunk of chunks) {
