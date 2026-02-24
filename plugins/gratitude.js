@@ -164,15 +164,16 @@ export default {
 
       // Show last 7 days
       const dates = Object.keys(byDate).sort().reverse().slice(0, 7);
-      const lines = [];
+      const sections = [];
       for (const date of dates) {
-        lines.push(`📅 ${date}`);
+        const lines = [`📅 ${date}`];
         for (const text of byDate[date]) {
-          lines.push(`  🌿 ${text}`);
+          lines.push(`🌿 ${text}`);
         }
+        sections.push(lines.join("\n"));
       }
 
-      await reply(lines.join("\n"));
+      await reply(sections.join("\n\n"));
     },
   },
 
