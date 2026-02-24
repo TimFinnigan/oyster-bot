@@ -137,6 +137,17 @@ export default {
       pendingPrompts.set(msg.userId, { channelId: msg.channelId, channelType: msg.channelType, date: todayPT() });
     },
 
+    grateful: async (msg, { reply }) => {
+      const input = msg.text.replace(/^\.grateful\s*(for\s*)?/i, "").trim();
+      if (!input) {
+        await reply("Usage: `.grateful for <text>`\nExample: `.grateful for great dinner with friends`");
+        return;
+      }
+      saveEntry({ userId: msg.userId, date: todayPT(), text: input, savedAt: new Date().toISOString() });
+      const log = loadLog().filter((e) => e.userId === msg.userId);
+      await reply(`✅ Gratitude logged 🌿\n"${input}"\n${log.length} entries total.`);
+    },
+
     gratitudes: async (msg, { reply }) => {
       const log = loadLog().filter((e) => e.userId === msg.userId);
       if (log.length === 0) {
