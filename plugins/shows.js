@@ -120,10 +120,26 @@ export default {
           return;
         }
         const showDetails = await Promise.all(shows.map((s) => getShowWithEpisodes(s.id)));
-        const lines = shows.map((s, i) => {
+        const entries = shows.map((s, i) => {
           const detail = showDetails[i];
           const nextEp = detail?._embedded?.nextepisode;
           const prevEp = detail?._embedded?.previousepisode;
+          return { s, nextEp, prevEp };
+        });
+
+        // Sort: shows with upcoming episodes first (by date), then by last aired
+        entries.sort((a, b) => {
+          const aNext = a.nextEp?.airdate;
+          const bNext = b.nextEp?.airdate;
+          if (aNext && bNext) return aNext.localeCompare(bNext);
+          if (aNext) return -1;
+          if (bNext) return 1;
+          const aPrev = a.prevEp?.airdate || "";
+          const bPrev = b.prevEp?.airdate || "";
+          return bPrev.localeCompare(aPrev); // most recently aired first
+        });
+
+        const lines = entries.map(({ s, nextEp, prevEp }, i) => {
           let info;
           if (nextEp?.airdate) {
             info = `next ep ${nextEp.airdate}`;
