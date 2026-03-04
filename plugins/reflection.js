@@ -17,9 +17,13 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { getDataDir } from "../src/runtime-paths.js";
+import { isPluginEnabled } from "../src/plugin-settings.js";
 
 const DATA_DIR = getDataDir();
 const HISTORY_FILE = join(DATA_DIR, "reflection-history.json");
+const STATE_FILE = join(DATA_DIR, "reflection-state.json");
+
+let _config = null;
 
 // ---------------------------------------------------------------------------
 // Prompt bank
@@ -112,6 +116,63 @@ function loadHistory() {
 function saveHistory(history) {
   ensureDataDir();
   writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+}
+
+function loadState() {
+  try {
+    if (existsSync(STATE_FILE)) return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+  } catch {}
+  return {};
+}
+
+function saveState(state) {
+  ensureDataDir();
+  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+function todayPT() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+}
+
+async function sendReflection(channel, channelId, userId) {
+  if (_config && !isPluginEnabled("reflection", userId, _config)) {
+    console.log("[reflection] Plugin disabled for user, skipping");
+    return;
+  }
+  const text = getReflection(userId);
+  await channel.send(channelId, `🪞 ${text}`);
+  saveState({ lastReflectionDate: todayPT() });
+  console.log("[reflection] Sent scheduled reflection");
+}
+
+function scheduleRandomReflection(channel, channelId, userId) {
+  const state = loadState();
+  if (state.lastReflectionDate === todayPT()) {
+    console.log("[reflection] Already sent today, skipping");
+    return;
+  }
+
+  const now = new Date();
+  const ptTime = now.toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric", minute: "numeric", hour12: false,
+  });
+  const [ptHour, ptMinute] = ptTime.split(":").map(Number);
+  const ptMinuteOfDay = ptHour * 60 + ptMinute;
+
+  const startMinute = 9 * 60;  // 9am PT
+  const endMinute   = 20 * 60; // 8pm PT
+
+  if (ptMinuteOfDay >= endMinute) {
+    console.log("[reflection] Past 8pm PT, skipping today");
+    return;
+  }
+
+  const windowMinutes = endMinute - Math.max(ptMinuteOfDay, startMinute);
+  const delayMs = Math.floor(Math.random() * windowMinutes * 60 * 1000);
+
+  console.log(`[reflection] Random reflection in ${Math.round(delayMs / 60000)}m`);
+  setTimeout(() => sendReflection(channel, channelId, userId), delayMs);
 }
 
 function getUserState(history, userId) {
@@ -224,31 +285,28 @@ export default {
 
   schedules: [
     {
-      cron: process.env.REFLECTION_CRON || "0 9 * * *",
+      // Fires at midnight PT to schedule the day's random reflection
+      cron: process.env.REFLECTION_CRON || "0 8 * * *", // ~midnight PT (UTC-8)
 
       handler: async ({ channels, config }) => {
+        _config = config;
         const targetChatId = config.plugins?.targetChatId;
         const targetChannel = config.plugins?.targetChannel || "telegram";
-
-        if (!targetChatId) {
-          console.log("[reflection] No PLUGIN_TARGET_CHAT_ID configured, skipping scheduled reflection");
-          return;
-        }
-
+        if (!targetChatId) return;
         const channel = channels.get(targetChannel);
-        if (!channel) {
-          console.log(`[reflection] Channel '${targetChannel}' not available, skipping scheduled reflection`);
-          return;
-        }
-
-        try {
-          const text = getReflection(String(targetChatId));
-          await channel.send(String(targetChatId), `🪞 ${text}`);
-          console.log("[reflection] Sent scheduled reflection");
-        } catch (err) {
-          console.error("[reflection] Failed to send scheduled reflection:", err.message);
-        }
+        if (!channel) return;
+        scheduleRandomReflection(channel, String(targetChatId), String(targetChatId));
       },
     },
   ],
+
+  init: async ({ channels, config }) => {
+    _config = config;
+    const targetChatId = config.plugins?.targetChatId;
+    const targetChannel = config.plugins?.targetChannel || "telegram";
+    if (!targetChatId) return;
+    const channel = channels.get(targetChannel);
+    if (!channel) return;
+    scheduleRandomReflection(channel, String(targetChatId), String(targetChatId));
+  },
 };
