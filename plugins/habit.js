@@ -348,7 +348,7 @@ export default {
           return `${cells}  ${habit.name}${streakStr}`;
         });
 
-        let message = "```\n" + rows.join("\n") + "\n```";
+        let message = "```\n\n" + rows.join("\n") + "\n```";
 
         await reply(message);
         return;
@@ -405,8 +405,8 @@ export default {
 
   schedules: [
     {
-      // 7pm PT = 3:00 UTC (winter, UTC-8). Override with HABIT_REMINDER_CRON.
-      cron: process.env.HABIT_REMINDER_CRON || "0 3 * * *",
+      // 7pm PT. Override with HABIT_REMINDER_CRON.
+      cron: process.env.HABIT_REMINDER_CRON || "0 19 * * *",
 
       handler: async ({ channels, config }) => {
         const targetChatId = config.plugins?.targetChatId;
