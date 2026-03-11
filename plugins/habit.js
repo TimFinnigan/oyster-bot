@@ -362,9 +362,9 @@ export default {
           return;
         }
 
-        const lines = myHabits.map((h) => {
+        const lines = myHabits.map((h, i) => {
           const done = getLogEntry(log, userId, h.name, today)?.status === "done";
-          return done ? `${h.name} ✅` : h.name;
+          return done ? `${i + 1}. ${h.name} ✅` : `${i + 1}. ${h.name}`;
         });
         await reply(lines.join("\n"));
         return;
@@ -426,7 +426,7 @@ export default {
         const pending = myHabits.filter((h) => !getLogEntry(log, userId, h.name, today));
         if (pending.length === 0) return;
 
-        const lines = pending.map((h) => `${h.emoji} ${h.name}`);
+        const lines = pending.map((h) => h.name);
         await channel.send(userId, `🌅 Habits left for today:\n\n${lines.join("\n")}`);
         console.log(`[habit] Sent reminder for ${pending.length} unlogged habit(s)`);
       },
