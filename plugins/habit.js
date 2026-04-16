@@ -11,6 +11,7 @@
  * - .habit grid [weeks]        — show emoji grid (default 4, max 12)
  * - .habit list                — show all habits with current streaks
  * - .habit remove <name>       — delete a habit and its history
+ * - .habit week                 — weekly summary with vs-last-week comparison
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -172,6 +173,48 @@ function calcCompletion(userId, habitName, log, weeks) {
     date = addDays(date, 1);
   }
   return { done, total };
+}
+
+// Completion stats for a Mon-anchored week. Days after today are excluded.
+function calcWeekStats(userId, habits, log, weekStart) {
+  const today = todayPT();
+  return habits.map((habit) => {
+    const map = buildLogMap(log, userId, habit.name);
+    let done = 0, total = 0;
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(weekStart, i);
+      if (date > today) break;
+      total++;
+      if (map.get(date) === "done") done++;
+    }
+    return { habit, done, total };
+  });
+}
+
+function buildWeeklySummary(userId, habits, log) {
+  const today = todayPT();
+  const thisWeekStart = startOfWeek(today);
+  const lastWeekStart = addDays(thisWeekStart, -7);
+
+  const thisWeek = calcWeekStats(userId, habits, log, thisWeekStart);
+  const lastWeek = calcWeekStats(userId, habits, log, lastWeekStart);
+
+  const range = formatDateRange(thisWeekStart, addDays(thisWeekStart, 6));
+  const lines = [`📊 Week of ${range}`];
+
+  for (let i = 0; i < thisWeek.length; i++) {
+    const { habit, done, total } = thisWeek[i];
+    const prev = lastWeek[i];
+    let trend = "";
+    if (prev.total > 0) {
+      const diff = done - prev.done;
+      if (diff > 0) trend = `  ↑+${diff}`;
+      else if (diff < 0) trend = `  ↓${diff}`;
+    }
+    lines.push(`${habit.name}  ${done}/${total}${trend}`);
+  }
+
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +409,7 @@ export default {
           const done = getLogEntry(log, userId, h.name, today)?.status === "done";
           return done ? `${i + 1}. ${h.name} ✅` : `${i + 1}. ${h.name}`;
         });
-        await reply(lines.join("\n"));
+        await reply(lines.join("\n\n"));
         return;
       }
 
@@ -390,6 +433,17 @@ export default {
         return;
       }
 
+      // ── WEEK ───────────────────────────────────────────────────────────────
+      if (sub === "week") {
+        const myHabits = userHabits(habits, userId);
+        if (myHabits.length === 0) {
+          await reply("No habits yet. Start with `.habit add <name>`");
+          return;
+        }
+        await reply(buildWeeklySummary(userId, myHabits, log));
+        return;
+      }
+
       // ── HELP ───────────────────────────────────────────────────────────────
       await reply(
         "🌱 Habit Tracker\n\n" +
@@ -398,6 +452,7 @@ export default {
         "`.habit skip <name>` — mark today as skipped\n" +
         "`.habit grid [days]` — show emoji grid (default 5, max 30)\n" +
         "`.habit list` — show habits and streaks\n" +
+        "`.habit week` — weekly summary vs last week\n" +
         "`.habit remove <name>` — delete a habit and its history"
       );
     },
@@ -429,6 +484,27 @@ export default {
         const lines = pending.map((h) => h.name);
         await channel.send(userId, `🌅 Habits left for today:\n\n${lines.join("\n")}`);
         console.log(`[habit] Sent reminder for ${pending.length} unlogged habit(s)`);
+      },
+    },
+    {
+      // Sunday 8pm PT. Override with HABIT_WEEKLY_CRON.
+      cron: process.env.HABIT_WEEKLY_CRON || "0 20 * * 0",
+
+      handler: async ({ channels, config }) => {
+        const targetChatId = config.plugins?.targetChatId;
+        const targetChannel = config.plugins?.targetChannel || "telegram";
+        if (!targetChatId) return;
+
+        const channel = channels.get(targetChannel);
+        if (!channel) return;
+
+        const userId = String(targetChatId);
+        const myHabits = userHabits(loadHabits(), userId);
+        if (myHabits.length === 0) return;
+
+        const log = loadLog();
+        await channel.send(userId, buildWeeklySummary(userId, myHabits, log));
+        console.log("[habit] Sent weekly summary");
       },
     },
   ],
