@@ -325,6 +325,7 @@ export async function loadPlugins({ channels, config, runClaude }) {
             continue;
           }
 
+          const cronOptions = schedule.timezone ? { timezone: schedule.timezone } : {};
           const task = cron.schedule(schedule.cron, async () => {
             const targetUserId = _config?.plugins?.targetChatId;
             if (targetUserId && !isPluginEnabled(plugin.name, String(targetUserId), _config)) {
@@ -341,14 +342,15 @@ export async function loadPlugins({ channels, config, runClaude }) {
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
-          });
+          }, cronOptions);
           scheduledTasks.push(task);
           scheduleRegistry.push({
             pluginName: plugin.name,
             cron: schedule.cron,
+            timezone: schedule.timezone || null,
             label: schedule.label || null,
           });
-          console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
+          console.log(`[plugins]   Scheduled task: ${schedule.cron}${schedule.timezone ? ` (${schedule.timezone})` : ""}`);
         }
       }
 
@@ -586,6 +588,7 @@ export async function reloadPlugins() {
             continue;
           }
 
+          const cronOptions = schedule.timezone ? { timezone: schedule.timezone } : {};
           const task = cron.schedule(schedule.cron, async () => {
             const targetUserId = _config?.plugins?.targetChatId;
             if (targetUserId && !isPluginEnabled(plugin.name, String(targetUserId), _config)) {
@@ -602,14 +605,15 @@ export async function reloadPlugins() {
             } catch (err) {
               console.error(`[plugins] Scheduled task error (${plugin.name}):`, err.message);
             }
-          });
+          }, cronOptions);
           scheduledTasks.push(task);
           scheduleRegistry.push({
             pluginName: plugin.name,
             cron: schedule.cron,
+            timezone: schedule.timezone || null,
             label: schedule.label || null,
           });
-          console.log(`[plugins]   Scheduled task: ${schedule.cron}`);
+          console.log(`[plugins]   Scheduled task: ${schedule.cron}${schedule.timezone ? ` (${schedule.timezone})` : ""}`);
         }
       }
 
