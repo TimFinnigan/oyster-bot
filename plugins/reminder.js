@@ -115,6 +115,18 @@ function saveRecurring(recurring) {
 }
 
 /**
+ * Parse a day-of-month string like "16th", "1st", "3rd", "16" into 1-31.
+ * Returns null if not a valid day-of-month.
+ */
+function parseDayOfMonth(str) {
+  const match = str.match(/^(\d{1,2})(st|nd|rd|th)?$/i);
+  if (!match) return null;
+  const day = parseInt(match[1], 10);
+  if (day < 1 || day > 31) return null;
+  return day;
+}
+
+/**
  * Parse a day-of-week string like "monday", "mon", "tue" into 0-6 (Sun=0).
  * Returns null if not a valid day name.
  */
@@ -165,15 +177,21 @@ function parseClockTime(str) {
 
 /**
  * Get the next occurrence of a given clock time as a Date.
- * If dayOfWeek (0-6, Sun=0) is provided, finds the next occurrence on that weekday.
- * If the time has already passed today (or this week), advances accordingly.
+ * Supports daily, weekly (dayOfWeek), and monthly (dayOfMonth).
  */
-function getNextOccurrence(hour, minute, dayOfWeek = null) {
+function getNextOccurrence(hour, minute, dayOfWeek = null, dayOfMonth = null) {
   const now = new Date();
   const next = new Date();
   next.setHours(hour, minute, 0, 0);
 
-  if (dayOfWeek === null) {
+  if (dayOfMonth !== null) {
+    // Monthly: find next occurrence of this day-of-month
+    next.setDate(dayOfMonth);
+    if (next.getTime() <= now.getTime()) {
+      next.setMonth(next.getMonth() + 1);
+      next.setDate(dayOfMonth);
+    }
+  } else if (dayOfWeek === null) {
     // Daily: if time passed today, use tomorrow
     if (next.getTime() <= now.getTime()) {
       next.setDate(next.getDate() + 1);
@@ -182,7 +200,6 @@ function getNextOccurrence(hour, minute, dayOfWeek = null) {
     // Specific weekday: advance until we hit the right day
     const currentDay = next.getDay();
     let daysUntil = (dayOfWeek - currentDay + 7) % 7;
-    // If it's today but time has passed, go to next week
     if (daysUntil === 0 && next.getTime() <= now.getTime()) {
       daysUntil = 7;
     }
@@ -238,7 +255,7 @@ function scheduleRecurring(recurring) {
     clearTimeout(activeTimeouts.get(recurring.id));
   }
 
-  const next = getNextOccurrence(recurring.hour, recurring.minute, recurring.dayOfWeek ?? null);
+  const next = getNextOccurrence(recurring.hour, recurring.minute, recurring.dayOfWeek ?? null, recurring.dayOfMonth ?? null);
   const delay = next.getTime() - Date.now();
 
   const timeoutId = setTimeout(() => sendRecurringReminder(recurring), delay);
@@ -587,12 +604,18 @@ export default {
 
       const parts = input.split(/\s+/);
 
-      // Check if first token is a day name
       let dayOfWeek = null;
+      let dayOfMonth = null;
       let timeIndex = 0;
-      const maybeDay = parseDayOfWeek(parts[0]);
-      if (maybeDay !== null) {
-        dayOfWeek = maybeDay;
+
+      const maybeWeekday = parseDayOfWeek(parts[0]);
+      const maybeMonthDay = parseDayOfMonth(parts[0]);
+
+      if (maybeWeekday !== null) {
+        dayOfWeek = maybeWeekday;
+        timeIndex = 1;
+      } else if (maybeMonthDay !== null) {
+        dayOfMonth = maybeMonthDay;
         timeIndex = 1;
       }
 
@@ -600,13 +623,13 @@ export default {
       const parsed = parseClockTime(timeStr);
 
       if (!parsed) {
-        await reply("❌ Invalid format. Examples:\n`.every 9am drink water` (daily)\n`.every monday 9am gym` (weekly)");
+        await reply("❌ Invalid format. Examples:\n`.every 9am drink water` (daily)\n`.every monday 9am gym` (weekly)\n`.every 16th 9am check X` (monthly)");
         return;
       }
 
       const text = parts.slice(timeIndex + 1).join(" ");
       if (!text) {
-        await reply("❌ Please specify what to remind you about.\n\nExamples: `.every 10pm are you in bed yet?` or `.every monday 9am gym`");
+        await reply("❌ Please specify what to remind you about.\n\nExamples: `.every 10pm check in` or `.every 16th 9am review budget`");
         return;
       }
 
@@ -620,6 +643,7 @@ export default {
         hour: parsed.hour,
         minute: parsed.minute,
         dayOfWeek,
+        dayOfMonth,
         createdAt: new Date().toISOString(),
       };
 
@@ -629,11 +653,13 @@ export default {
 
       scheduleRecurring(recurring);
 
-      const next = getNextOccurrence(parsed.hour, parsed.minute, dayOfWeek);
+      const next = getNextOccurrence(parsed.hour, parsed.minute, dayOfWeek, dayOfMonth);
       const delay = next.getTime() - Date.now();
-      const scheduleLabel = dayOfWeek !== null
-        ? `every ${DAY_NAMES[dayOfWeek]} at ${formatClockTime(parsed.hour, parsed.minute)}`
-        : `daily at ${formatClockTime(parsed.hour, parsed.minute)}`;
+      const scheduleLabel = dayOfMonth !== null
+        ? `every month on the ${dayOfMonth}${["st","nd","rd"][((dayOfMonth+90)%100-10)%10-1]||"th"} at ${formatClockTime(parsed.hour, parsed.minute)}`
+        : dayOfWeek !== null
+          ? `every ${DAY_NAMES[dayOfWeek]} at ${formatClockTime(parsed.hour, parsed.minute)}`
+          : `daily at ${formatClockTime(parsed.hour, parsed.minute)}`;
 
       await reply(`🔁 Recurring reminder set for ${scheduleLabel}.\n📝 "${text}"\n⏳ First fire in ${formatDuration(delay)}`);
     },
@@ -648,11 +674,14 @@ export default {
 
       const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
       const lines = all.map((r, i) => {
-        const next = getNextOccurrence(r.hour, r.minute, r.dayOfWeek ?? null);
+        const next = getNextOccurrence(r.hour, r.minute, r.dayOfWeek ?? null, r.dayOfMonth ?? null);
         const delay = next.getTime() - Date.now();
-        const scheduleLabel = r.dayOfWeek != null
-          ? `every ${DAY_NAMES[r.dayOfWeek]} at ${formatClockTime(r.hour, r.minute)}`
-          : `daily at ${formatClockTime(r.hour, r.minute)}`;
+        const d = r.dayOfMonth;
+        const scheduleLabel = d != null
+          ? `every month on the ${d}${["st","nd","rd"][((d+90)%100-10)%10-1]||"th"} at ${formatClockTime(r.hour, r.minute)}`
+          : r.dayOfWeek != null
+            ? `every ${DAY_NAMES[r.dayOfWeek]} at ${formatClockTime(r.hour, r.minute)}`
+            : `daily at ${formatClockTime(r.hour, r.minute)}`;
         return `${i + 1}. "${r.text}" — ${scheduleLabel} (next in ${formatDuration(delay)})`;
       });
 
