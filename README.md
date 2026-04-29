@@ -133,11 +133,13 @@ Create a `.env` file with the following variables:
 | `PLUGIN_DIR` | `./plugins` | Primary plugin directory |
 | `PLUGIN_DIRS` | (none) | Comma-separated plugin directories. If set, overrides `PLUGIN_DIR` |
 | `PLUGIN_TARGET_CHAT_ID` | (none) | Your Telegram user ID for receiving scheduled messages |
+| `PLUGIN_DEFAULT_DISABLED` | (none) | Comma-separated plugin names to disable by default for all users |
 | `QUOTES_CRON` | `0 * * * *` | Cron schedule for quotes (default: hourly) |
 | `WEATHER_DEFAULT_LOCATION` | (none) | Default location for weather (e.g., "Seattle, WA") |
 | `WEATHER_CRON` | `0 8 * * *` | Cron schedule for daily weather (default: 8am) |
 | `ORCHESTRATOR_CRON` | `0 9 * * *` | Cron schedule for orchestrator check-ins (default: 9am) |
 | `ORCHESTRATOR_ENABLED` | `true` | Enable/disable scheduled orchestrator check-ins |
+| `OBSIDIAN_VAULT_PATH` | (none) | Absolute path to your Obsidian vault (required for Obsidian plugins) |
 
 ### Example `.env`
 
@@ -329,6 +331,7 @@ Intervals accept `s`, `m`, `h`, `d` units (e.g., `30m`, `6h`, `2d`). Commands ru
 **Quotes Plugin** (`plugins/quotes.js`)
 - `.quote` — Get a real inspiring quote (no repeats; logged to disk)
 - Scheduled job sends a daily quote to `PLUGIN_TARGET_CHAT_ID` (cron configurable via `QUOTES_CRON`)
+- To disable the scheduled quote while keeping the command, add `quotes` to `PLUGIN_DEFAULT_DISABLED`
 
 **Recipe Plugin** (`plugins/recipe.js`)
 - `.recipe chicken, rice, garlic --quick --vegetarian` — Generates a single practical recipe  
@@ -340,6 +343,7 @@ Intervals accept `s`, `m`, `h`, `d` units (e.g., `30m`, `6h`, `2d`). Commands ru
 - `.cancelreminder <number|id>` — Cancel by list number **or** unique ID
 - `.reminderlog` — View recently completed reminders
 - `.every <time> <text>` — Daily reminder (also accepts weekdays like `mon 8am stretch`)
+- `.every <ordinal> <time> <text>` — Monthly reminder (e.g., `.every 1st 9am pay bills`, `.every 16th 8am check in`)
 - `.recurring` — View/manage recurring reminders
 
 **Weather Plugin** (`plugins/weather.js`)
@@ -372,8 +376,41 @@ Example workflow:
 ```
 
 **Routine Breaker Plugin** (`../local-oyster-bot-plugins/active/routine-breaker.js`)
-- `.routine` — Get a quick suggestion to shake up your day (different weekday/weekend zones)
-- Also schedules one random suggestion between 9 AM–12 PM daily
+- `.routine` — Get a quick suggestion to shake up your day
+- `.food [filters]` — Get a food/restaurant suggestion (optional free-form filters like `ramen`, `quick`, `date night`)
+- Scheduled: `.routine` fires weekdays at 4pm and weekends at 9am (America/Los_Angeles)
+- Scheduled: `.food` fires Monday and Friday at 10am
+
+**Obsidian Plugin** (`../local-oyster-bot-plugins/active/obsidian/`)
+
+Writes notes directly to your Obsidian vault (requires `OBSIDIAN_VAULT_PATH`). All notes go in `{VAULT_PATH}/{YYYY-MM-DD}/` with yesterday's folder archived to `Past/` each morning.
+
+- `.journal` — Generate a daily journal note with a quote and reflection question (cron: 7am daily)
+- `.habits` — Create today's habits checklist (cron: 6am daily; incomplete habits carry forward)
+- `.tasks` — Create today's task list, carrying over incomplete tasks from yesterday (cron: 6am daily)
+- `.weekly` — Generate a weekly review note summarizing the past 7 days of journal/habits (cron: Sunday 8am)
+- `.idea` — Generate and save one random idea to `Ideas/New/`
+- `.idea <text>` — Save a specific idea with AI-generated description
+- `.idea <n>` — Generate N random ideas (up to 10, e.g., `.idea 5`)
+
+**Backburner Reminder Plugin** (`../local-oyster-bot-plugins/active/backburner-reminder.js`)
+- Reads `Backburner.md` from your vault and nudges you about 2-3 items worth revisiting
+- Scheduled: Tuesday and Saturday at 10am
+
+**Spouse Connect Plugin** (`../local-oyster-bot-plugins/active/spouse-connect.js`)
+- `.connect` — Get a connection suggestion (conversation question, game, or activity)
+- Rotates types so you don't get the same category 3 times in a row
+- Scheduled: Tuesday and Thursday at 5pm, Saturday at 10am
+
+**Vault Backup Plugin** (`../local-oyster-bot-plugins/active/vault-backup.js`)
+- `.backup` — Manually back up your Obsidian vault to `~/Backups/obsidian/YYYY-MM/`
+- Scheduled: 1st of each month at 9am
+
+**Podcast Recommender Plugin** (`../local-oyster-bot-plugins/active/podcast-recommender.js`)
+- `.podcast` — Get an episode recommendation from a show you don't already subscribe to
+- Reads `Media/Podcasts/` in your vault to know which shows to skip
+- Uses web search to surface recent, well-praised episodes; avoids repeats via log file
+- Scheduled: Tuesday and Thursday at 10am
 
 **Keepalive Plugin** (`plugins/keepalive.js`)
 - No commands; simply logs a heartbeat every 5 minutes so the event loop stays warm

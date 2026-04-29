@@ -246,6 +246,10 @@ async function sendRecurringReminder(recurring) {
   scheduleRecurring(recurring);
 }
 
+// setTimeout's delay is a signed 32-bit int; anything > ~24.8 days overflows to 0 and
+// fires immediately, causing an infinite loop for monthly reminders. Cap at 23 days.
+const MAX_TIMEOUT_MS = 23 * 24 * 60 * 60 * 1000;
+
 /**
  * Schedule a recurring reminder for its next occurrence
  */
@@ -258,7 +262,11 @@ function scheduleRecurring(recurring) {
   const next = getNextOccurrence(recurring.hour, recurring.minute, recurring.dayOfWeek ?? null, recurring.dayOfMonth ?? null);
   const delay = next.getTime() - Date.now();
 
-  const timeoutId = setTimeout(() => sendRecurringReminder(recurring), delay);
+  // If delay exceeds setTimeout's 32-bit limit, re-check after MAX_TIMEOUT_MS
+  // without firing the handler. This handles monthly reminders safely.
+  const timeoutId = delay > MAX_TIMEOUT_MS
+    ? setTimeout(() => scheduleRecurring(recurring), MAX_TIMEOUT_MS)
+    : setTimeout(() => sendRecurringReminder(recurring), delay);
   activeTimeouts.set(recurring.id, timeoutId);
   if (_registerNotification) {
     _registerNotification(recurring.id, {
@@ -402,7 +410,9 @@ function scheduleReminder(reminder) {
     return;
   }
 
-  const timeoutId = setTimeout(() => sendReminder(reminder), delay);
+  const timeoutId = delay > MAX_TIMEOUT_MS
+    ? setTimeout(() => scheduleReminder(reminder), MAX_TIMEOUT_MS)
+    : setTimeout(() => sendReminder(reminder), delay);
   activeTimeouts.set(reminder.id, timeoutId);
   if (_registerNotification) {
     _registerNotification(reminder.id, {
