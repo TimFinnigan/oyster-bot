@@ -352,7 +352,7 @@ export class TelegramChannel extends BaseChannel {
    * Check if a user is allowed (Telegram uses numeric IDs)
    */
   isAllowed(userId) {
-    if (!this.config.allowedUserIds) return true;
+    if (!this.config.allowedUserIds) return false;
     return this.config.allowedUserIds.includes(Number(userId));
   }
 }
