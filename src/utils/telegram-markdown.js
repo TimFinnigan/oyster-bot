@@ -161,7 +161,7 @@ function convertInlineMarkdown(line) {
 
   const inlineTokens = [];
   // Match bold+italic, bold, italic (underscore), italic (asterisk)
-  const inlineRe = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_|~~(.+?)~~)/g;
+  const inlineRe = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_|~~(.+?)~~|\|\|(.+?)\|\|)/g;
   let cursor = 0;
   let m;
   while ((m = inlineRe.exec(line)) !== null) {
@@ -183,6 +183,9 @@ function convertInlineMarkdown(line) {
     } else if (m[6] !== undefined) {
       // Strikethrough ~~text~~
       inlineTokens.push({ type: "strikethrough", value: m[6] });
+    } else if (m[7] !== undefined) {
+      // Spoiler ||text||
+      inlineTokens.push({ type: "spoiler", value: m[7] });
     }
     cursor = m.index + m[0].length;
   }
@@ -201,6 +204,8 @@ function convertInlineMarkdown(line) {
           return "*_" + escapeMarkdownV2(t.value) + "_*";
         case "strikethrough":
           return "~" + escapeMarkdownV2(t.value) + "~";
+        case "spoiler":
+          return "||" + escapeMarkdownV2(t.value) + "||";
         case "plain":
         default:
           return escapeMarkdownV2(t.value);
@@ -224,5 +229,6 @@ export function stripMarkdown(md) {
     .replace(/(\*\*|__)(.*?)\1/g, "$2")         // bold → content
     .replace(/([*_])(.*?)\1/g, "$2")            // italic → content
     .replace(/~~(.+?)~~/g, "$1")                 // strikethrough → content
+    .replace(/\|\|(.+?)\|\|/g, "$1")             // spoiler → content
     .replace(/^\s*[*\-]\s+/gm, "• ");           // list markers → bullet
 }
